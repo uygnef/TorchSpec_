@@ -1,8 +1,9 @@
-# DeepSeek-V3.1 Eagle3 training - 3-node setup
+# DeepSeek-V3.1 remote SGLang + Mooncake feature-cache training.
 #
-# Node layout (24 GPUs across 3 nodes):
-#   - 2 nodes (16 GPUs) for inference via multi-node sgl.Engine with TP=16
-#   - 1 node  (8 GPUs, GPU 0-7)  for training (FSDP/DP)
+# This config is for the decoupled architecture:
+#   - training runs in TorchSpec
+#   - target-model prefill features come from a remote SGLang service
+#   - feature handles are materialized through Mooncake and cached locally
 #
 # Usage:
 #   bash examples/deepseek-v31-3node-h100/run.sh
@@ -15,6 +16,7 @@ dataset:
   train_data_path: ???  # set to your dataset path (HF hub id, local dir, or jsonl)
   chat_template: deepseek-v3
   prompt_key: conversations
+  defer_tokenization: false
 
 training:
   max_seq_length: 16384
@@ -35,40 +37,34 @@ training:
   distributed_timeout_minutes: 30
 
 inference:
-  inference_engine_type: sgl
-  inference_num_gpus: 16
-  inference_num_gpus_per_engine: 16
-  inference_num_gpus_per_node: 8
-  max_sample_pool_size: 32
-  inference_buffer_threshold: 8
-  inference_fetch_batch: 32
-  inference_batch_size: 8
-  sglang:
-    tp_size: 16
-    nnodes: 2
-    dist_init_addr: null  # auto-negotiated via Ray; set explicitly to override
-    mem_fraction_static: 0.6
-    init_timeout: 1800
-    dist_timeout: 600
-    extra_args:
-      model_loader_extra_config:
-        enable_multithread_load: true
-        num_threads: 32
-      disable_flashinfer_autotune: true
-      watchdog_timeout: 1800
+  mode: remote_sglang
+  remote_sglang:
+    endpoint: http://127.0.0.1:30000
+    timeout_seconds: 60.0
+    max_retries: 2
+    feature_schema_version: eagle3.v1
+
+feature_cache:
+  enabled: true
+  index_path: ./cache/remote_deepseek_v31_feature_cache.sqlite3
+  delete_after_read: false
+  stale_on_missing: true
 
 mooncake:
-  master_server_address: null
-  metadata_server: null
+  master_server_address: 127.0.0.1:50051
+  metadata_server: 127.0.0.1
+  metadata_port: 50052
   protocol: tcp # Change this to RDMA for good performance.
+  local_hostname: 127.0.0.1
+  enable_gpu_direct: false
+  max_seq_len: 16384
   hidden_dim: 7168
   global_segment_size: 128GB
   local_buffer_size: 16GB
   # device_name: mlx5_0,mlx5_1 # Please change this to correct network devices.
-  # enable_gpu_direct: true
 
-output_dir: ./outputs/train_deepseek_v31_3node
-cache_dir: ./cache/train_deepseek_v31_3node
+output_dir: ./outputs/remote_deepseek_v31
+cache_dir: ./cache/remote_deepseek_v31
 model_download_dir: null
 
 debug:

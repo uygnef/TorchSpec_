@@ -1,14 +1,13 @@
-# DeepSeek-V3.1 3-Node Training
+# DeepSeek-V3.1 Remote-SGLang Training
 
-Production-style 3-node setup for training an Eagle3 draft model for DeepSeek-V3.1.
+Production-style launcher for training an Eagle3 draft model for DeepSeek-V3.1 with the decoupled remote-SGLang architecture.
 
 ## Prerequisites
 
-- 3 nodes with 24 GPUs total:
-  - Node 0 (head): 8 GPUs for training
-  - Node 1-2 (workers): 8 GPUs each for inference (TP=16)
+- A reachable remote `sglang` service exposing `/generate_for_spec_training`
+- Mooncake metadata/master services reachable from the training job
+- Training node(s) with GPUs for TorchSpec
 - Model access to `/nfs/ofs-llm-ssd/models/opensource/DeepSeek-V3.1`
-- RDMA network if you want Mooncake RDMA mode
 
 ## Config
 
@@ -17,6 +16,8 @@ Uses [`configs/sglang_deepseek_v31_3node.yaml`](../../configs/sglang_deepseek_v3
 Default assumptions:
 
 - `dataset.chat_template=deepseek-v3`
+- `inference.mode=remote_sglang`
+- `feature_cache.enabled=true`
 - `model.draft_model_config` is left unset, so TorchSpec auto-generates a 1-layer Eagle3 config from the target model
 
 ## How to run
@@ -40,6 +41,7 @@ HEAD_IP=<node0_ip> NODE_ROLE=worker bash examples/deepseek-v31-3node-h100/setup_
 On the head node:
 
 ```bash
+REMOTE_SGLANG_ENDPOINT=http://<sglang_host>:30000 \
 bash examples/deepseek-v31-3node-h100/run.sh
 ```
 
@@ -61,6 +63,13 @@ bash examples/deepseek-v31-3node-h100/run.sh \
 
 # Use a different DeepSeek chat template
 CHAT_TEMPLATE=deepseek-v32 bash examples/deepseek-v31-3node-h100/run.sh
+
+# Point to a remote service and Mooncake control plane
+REMOTE_SGLANG_ENDPOINT=http://10.0.0.8:30000 \
+MOONCAKE_MASTER_ADDRESS=10.0.0.8:50051 \
+MOONCAKE_METADATA_SERVER=10.0.0.8 \
+MOONCAKE_METADATA_PORT=50052 \
+bash examples/deepseek-v31-3node-h100/run.sh
 
 # Override config file
 CONFIG_FILE=configs/custom_deepseek.yaml bash examples/deepseek-v31-3node-h100/run.sh

@@ -18,6 +18,12 @@ export HF_HOME="${HF_HOME:-/nfs/ofs-llab-volume/users/fengyu/hf_cache}"
 export SGLANG_DG_CACHE_DIR="${SGLANG_DG_CACHE_DIR:-/nfs/ofs-fengyu/cache/deep_gemm}"
 mkdir -p "$SGLANG_DG_CACHE_DIR"
 echo "SGLANG_DG_CACHE_DIR: $SGLANG_DG_CACHE_DIR"
+export REMOTE_SGLANG_ENDPOINT="${REMOTE_SGLANG_ENDPOINT:-http://127.0.0.1:30000}"
+export FEATURE_CACHE_ENABLED="${FEATURE_CACHE_ENABLED:-true}"
+export FEATURE_CACHE_INDEX="${FEATURE_CACHE_INDEX:-/nfs/ofs-llab-volume/users/fengyu/TorchSpec/cache/remote_deepseek_v31_feature_cache.sqlite3}"
+export MOONCAKE_MASTER_ADDRESS="${MOONCAKE_MASTER_ADDRESS:-127.0.0.1:50051}"
+export MOONCAKE_METADATA_SERVER="${MOONCAKE_METADATA_SERVER:-127.0.0.1}"
+export MOONCAKE_METADATA_PORT="${MOONCAKE_METADATA_PORT:-50052}"
 
 WORKING_DIR="${WORKING_DIR:-/nfs/ofs-llab-volume/users/fengyu/TorchSpec}"
 cd "$WORKING_DIR"
@@ -79,6 +85,6 @@ if [ "${DISTRIBUTED_NODE_RANK}" -eq 0 ]; then
 else
     RAY_ADDRESS="${DISTRIBUTED_MASTER_HOSTS}:${PET_MASTER_PORT}"
     HEAD_IP=$DISTRIBUTED_MASTER_HOSTS NODE_ROLE=worker bash examples/deepseek-v31-3node-h100/setup_ray_cluster.sh
-    echo "ray start worker join master ${RAY_ADDRESS}"
+    echo "ray worker joined ${RAY_ADDRESS}; remote SGLang endpoint is ${REMOTE_SGLANG_ENDPOINT}"
     sleep infinity
 fi
