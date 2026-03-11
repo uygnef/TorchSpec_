@@ -118,9 +118,13 @@ class FeatureCache:
         prefix_sample = self._slice_prefix_sample(sample, handle.cached_tokens)
         prefix_handle = self.manifest.get(handle.prefix_sample_key)
         if prefix_handle is None:
+            # The remote radix cache can hit prefixes that this local cache has not
+            # seen before, so recursively fetch the prefix features on demand.
+            prefix_handle = self.resolve_handle(prefix_sample)
+        if prefix_handle is None:
             raise RemoteSGLangError(
                 "Remote SGLang returned cached prompt tokens, but the local feature cache "
-                f"does not contain the required prefix sample {handle.prefix_sample_key} "
+                f"could not resolve the required prefix sample {handle.prefix_sample_key} "
                 f"(cached_tokens={handle.cached_tokens})."
             )
 

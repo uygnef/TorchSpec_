@@ -173,3 +173,67 @@ def test_feature_cache_stitches_cached_prefix_and_suffix(tmp_path):
     assert result["hidden_states"].shape == (3, 4)
     assert result["last_hidden_states"].shape == (3, 2)
     assert result["input_ids"].tolist() == [1, 2, 3]
+
+
+def test_feature_cache_fetches_missing_prefix_on_demand(tmp_path):
+    manifest = CacheManifest(str(tmp_path / "manifest.sqlite3"))
+    prefix_handle = FeatureHandle(
+        sample_key="prefix",
+        mooncake_key="feature:prefix",
+        tensor_shapes={
+            "hidden_states": (2, 4),
+            "input_ids": (2,),
+            "last_hidden_states": (2, 2),
+        },
+        tensor_dtypes={
+            "hidden_states": "float32",
+            "input_ids": "int64",
+            "last_hidden_states": "float32",
+        },
+        feature_schema_version="eagle3.v1",
+        created_at=1.0,
+    )
+    composite_handle = FeatureHandle(
+        sample_key="sample-5",
+        mooncake_key="feature:sample-5",
+        tensor_shapes={
+            "hidden_states": (1, 4),
+            "input_ids": (3,),
+            "last_hidden_states": (1, 2),
+        },
+        tensor_dtypes={
+            "hidden_states": "float32",
+            "input_ids": "int64",
+            "last_hidden_states": "float32",
+        },
+        feature_schema_version="eagle3.v1",
+        created_at=2.0,
+        prefix_sample_key="prefix",
+        cached_tokens=2,
+    )
+    manifest.upsert(composite_handle)
+
+    mooncake_store = _MockMooncakeStore()
+    mooncake_store.existing.update({"feature:prefix_hs", "feature:sample-5_hs"})
+
+    class _RemoteClient:
+        def __init__(self):
+            self.calls = []
+
+        def request_features(self, **kwargs):
+            self.calls.append(kwargs["sample_key"])
+            if kwargs["sample_key"] == "prefix":
+                return prefix_handle
+            return composite_handle
+
+    remote_client = _RemoteClient()
+    cache = FeatureCache(manifest, remote_client, mooncake_store)
+
+    result = cache.resolve_and_load(
+        {"sample_key": "sample-5", "input_ids": [1, 2, 3], "packed_loss_mask": "111"},
+        device=torch.device("cpu"),
+    )
+
+    assert remote_client.calls == ["prefix"]
+    assert result["hidden_states"].shape == (3, 4)
+    assert manifest.get("prefix") == prefix_handle
