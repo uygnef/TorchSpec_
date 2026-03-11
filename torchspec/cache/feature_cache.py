@@ -4,7 +4,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from torchspec.cache.cache_manifest import CacheManifest, FeatureHandle
-from torchspec.inference.client.remote_sglang_client import RemoteSGLangError
+from torchspec.inference.client.errors import RemoteSGLangError
 
 
 class FeatureCache:

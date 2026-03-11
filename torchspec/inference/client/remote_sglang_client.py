@@ -6,10 +6,7 @@ import urllib.request
 from typing import Any, Optional
 
 from torchspec.cache.cache_manifest import FeatureHandle
-
-
-class RemoteSGLangError(RuntimeError):
-    pass
+from torchspec.inference.client.errors import RemoteSGLangError
 
 
 class RemoteSGLangClient:
