@@ -58,6 +58,7 @@ bash examples/qwen3-8b-single-node/launch_remote_sglang_server.sh
 
 In Luban job environments, the server port defaults to `LUBAN_AVAILABLE_PORT_1` when present.
 The launcher also enables `--enable-return-hidden-states`, which is required by TorchSpec remote feature extraction.
+The distributed rendezvous address is auto-selected and printed as `Dist init addr`; you can override it with `DIST_INIT_ADDR` or `DIST_PORT`.
 
 Training machine:
 

@@ -45,6 +45,19 @@ ADVERTISE_HOST="${ADVERTISE_HOST:-$LOCAL_IP}"
 MEM_FRACTION_STATIC="${MEM_FRACTION_STATIC:-0.75}"
 SGLANG_PYTHON_DIR="${SGLANG_PYTHON_DIR:-/nfs/ofs-llab-volume/users/fengyu/torchspec/_sglang/python}"
 EXTRA_ARGS="${EXTRA_ARGS:-}"
+find_free_port() {
+  python - <<'PY'
+import socket
+s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+s.bind(("", 0))
+print(s.getsockname()[1])
+s.close()
+PY
+}
+
+DIST_HOST="${DIST_HOST:-$ADVERTISE_HOST}"
+DIST_PORT="${DIST_PORT:-${LUBAN_AVAILABLE_PORT_2:-$(find_free_port)}}"
+DIST_INIT_ADDR="${DIST_INIT_ADDR:-$DIST_HOST:$DIST_PORT}"
 
 echo "=============================================="
 echo "Qwen3-8B Remote SGLang Server"
@@ -54,6 +67,7 @@ echo "Bind address:        $HOST:$PORT"
 echo "Reachable endpoint:  http://$ADVERTISE_HOST:$PORT"
 echo "TP size:             $TP_SIZE"
 echo "Mem fraction:        $MEM_FRACTION_STATIC"
+echo "Dist init addr:      $DIST_INIT_ADDR"
 echo "SGLang python dir:   $SGLANG_PYTHON_DIR"
 echo "Important flags:     radix cache ON, overlap schedule OFF"
 echo "=============================================="
@@ -65,6 +79,7 @@ python -m sglang.launch_server \
   --host "$HOST" \
   --port "$PORT" \
   --tp-size "$TP_SIZE" \
+  --dist-init-addr "$DIST_INIT_ADDR" \
   --mem-fraction-static "$MEM_FRACTION_STATIC" \
   --trust-remote-code \
   --enable-return-hidden-states \

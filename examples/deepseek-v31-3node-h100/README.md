@@ -32,6 +32,7 @@ bash examples/deepseek-v31-3node-h100/launch_remote_sglang_server.sh
 
 The script prints a `Reachable endpoint` line. Use that value for `REMOTE_SGLANG_ENDPOINT`.
 In Luban job environments, the server port defaults to `LUBAN_AVAILABLE_PORT_1` when present.
+The distributed rendezvous address is auto-selected and printed as `Dist init addr`; you can override it with `DIST_INIT_ADDR` or `DIST_PORT`.
 
 ### 2. Start the Ray cluster
 
