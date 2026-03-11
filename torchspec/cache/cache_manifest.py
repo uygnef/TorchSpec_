@@ -16,6 +16,8 @@ class FeatureHandle:
     feature_schema_version: str
     created_at: float
     expires_at: float | None = None
+    prefix_sample_key: str | None = None
+    cached_tokens: int = 0
 
 
 @dataclass(frozen=True)
@@ -29,6 +31,8 @@ class FeatureIndexEntry:
     last_access_at: float
     expires_at: float | None = None
     status: str = "ready"
+    prefix_sample_key: str | None = None
+    cached_tokens: int = 0
 
     def to_handle(self) -> FeatureHandle:
         return FeatureHandle(
@@ -39,6 +43,8 @@ class FeatureIndexEntry:
             feature_schema_version=self.feature_schema_version,
             created_at=self.created_at,
             expires_at=self.expires_at,
+            prefix_sample_key=self.prefix_sample_key,
+            cached_tokens=self.cached_tokens,
         )
 
 
@@ -78,10 +84,23 @@ class CacheManifest:
                     created_at REAL NOT NULL,
                     last_access_at REAL NOT NULL,
                     expires_at REAL,
-                    status TEXT NOT NULL
+                    status TEXT NOT NULL,
+                    prefix_sample_key TEXT,
+                    cached_tokens INTEGER NOT NULL DEFAULT 0
                 )
                 """
             )
+            columns = {
+                row["name"] for row in conn.execute("PRAGMA table_info(feature_manifest)").fetchall()
+            }
+            if "prefix_sample_key" not in columns:
+                conn.execute(
+                    "ALTER TABLE feature_manifest ADD COLUMN prefix_sample_key TEXT"
+                )
+            if "cached_tokens" not in columns:
+                conn.execute(
+                    "ALTER TABLE feature_manifest ADD COLUMN cached_tokens INTEGER NOT NULL DEFAULT 0"
+                )
             conn.execute(
                 """
                 CREATE INDEX IF NOT EXISTS idx_feature_manifest_last_access
@@ -95,7 +114,8 @@ class CacheManifest:
             row = conn.execute(
                 """
                 SELECT sample_key, mooncake_key, tensor_shapes_json, tensor_dtypes_json,
-                       feature_schema_version, created_at, last_access_at, expires_at, status
+                       feature_schema_version, created_at, last_access_at, expires_at, status,
+                       prefix_sample_key, cached_tokens
                 FROM feature_manifest
                 WHERE sample_key = ?
                 """,
@@ -117,8 +137,9 @@ class CacheManifest:
                 """
                 INSERT INTO feature_manifest (
                     sample_key, mooncake_key, tensor_shapes_json, tensor_dtypes_json,
-                    feature_schema_version, created_at, last_access_at, expires_at, status
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    feature_schema_version, created_at, last_access_at, expires_at, status,
+                    prefix_sample_key, cached_tokens
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(sample_key) DO UPDATE SET
                     mooncake_key = excluded.mooncake_key,
                     tensor_shapes_json = excluded.tensor_shapes_json,
@@ -127,7 +148,9 @@ class CacheManifest:
                     created_at = excluded.created_at,
                     last_access_at = excluded.last_access_at,
                     expires_at = excluded.expires_at,
-                    status = excluded.status
+                    status = excluded.status,
+                    prefix_sample_key = excluded.prefix_sample_key,
+                    cached_tokens = excluded.cached_tokens
                 """,
                 (
                     handle.sample_key,
@@ -139,6 +162,8 @@ class CacheManifest:
                     now,
                     handle.expires_at,
                     status,
+                    handle.prefix_sample_key,
+                    handle.cached_tokens,
                 ),
             )
 
@@ -165,4 +190,6 @@ def _row_to_entry(row: sqlite3.Row) -> FeatureIndexEntry:
         last_access_at=row["last_access_at"],
         expires_at=row["expires_at"],
         status=row["status"],
+        prefix_sample_key=row["prefix_sample_key"],
+        cached_tokens=row["cached_tokens"],
     )

@@ -4,6 +4,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from torchspec.cache.cache_manifest import CacheManifest, FeatureHandle
+from torchspec.inference.client.remote_sglang_client import RemoteSGLangError
 
 
 class FeatureCache:
@@ -31,13 +32,27 @@ class FeatureCache:
         explicit_key = sample.get("sample_key")
         if explicit_key:
             return str(explicit_key)
-        data_id = sample.get("data_id")
+        return self.build_sample_key_from_values(
+            input_ids=sample.get("input_ids"),
+            packed_loss_mask=sample.get("packed_loss_mask"),
+            multimodal_inputs=sample.get("multimodal_inputs"),
+            data_id=sample.get("data_id"),
+        )
+
+    @staticmethod
+    def build_sample_key_from_values(
+        *,
+        input_ids: Any,
+        packed_loss_mask: Any,
+        multimodal_inputs: Any,
+        data_id: Any = None,
+    ) -> str:
         if data_id:
             return str(data_id)
         payload = {
-            "input_ids": sample.get("input_ids"),
-            "packed_loss_mask": sample.get("packed_loss_mask"),
-            "multimodal_inputs": sample.get("multimodal_inputs"),
+            "input_ids": input_ids,
+            "packed_loss_mask": packed_loss_mask,
+            "multimodal_inputs": multimodal_inputs,
         }
         encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"))
         return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
@@ -68,6 +83,28 @@ class FeatureCache:
 
     def resolve_and_load(self, sample: Mapping[str, Any], *, device) -> dict[str, Any]:
         handle = self.resolve_handle(sample)
+        result = self._load_handle(handle, sample=sample, device=device)
+        if "packed_loss_mask" in sample:
+            result["packed_loss_mask"] = sample["packed_loss_mask"]
+        return result
+
+    def _handle_exists(self, handle: FeatureHandle) -> bool:
+        if not self.mooncake_store.exists(f"{handle.mooncake_key}_hs"):
+            return False
+        if handle.prefix_sample_key:
+            prefix = self.manifest.get(handle.prefix_sample_key, touch=False)
+            if prefix is None:
+                return False
+            return self._handle_exists(prefix)
+        return True
+
+    def _load_handle(
+        self,
+        handle: FeatureHandle,
+        *,
+        sample: Mapping[str, Any],
+        device,
+    ) -> dict[str, Any]:
         tensors = self.mooncake_store.get(
             key=handle.mooncake_key,
             shapes=handle.tensor_shapes,
@@ -75,12 +112,61 @@ class FeatureCache:
             device=device,
         )
         result = tensors.to_tensor_dict()
-        if "packed_loss_mask" in sample:
-            result["packed_loss_mask"] = sample["packed_loss_mask"]
-        return result
+        if not handle.prefix_sample_key:
+            return result
 
-    def _handle_exists(self, handle: FeatureHandle) -> bool:
-        return self.mooncake_store.exists(f"{handle.mooncake_key}_hs")
+        prefix_sample = self._slice_prefix_sample(sample, handle.cached_tokens)
+        prefix_handle = self.manifest.get(handle.prefix_sample_key)
+        if prefix_handle is None:
+            raise RemoteSGLangError(
+                "Remote SGLang returned cached prompt tokens, but the local feature cache "
+                f"does not contain the required prefix sample {handle.prefix_sample_key} "
+                f"(cached_tokens={handle.cached_tokens})."
+            )
+
+        prefix_result = self._load_handle(prefix_handle, sample=prefix_sample, device=device)
+        merged = dict(result)
+        for key in ("hidden_states", "last_hidden_states", "target"):
+            prefix_tensor = prefix_result.get(key)
+            suffix_tensor = result.get(key)
+            if prefix_tensor is None:
+                continue
+            if suffix_tensor is None:
+                merged[key] = prefix_tensor
+                continue
+            merged[key] = self._concat_feature_tensors(prefix_tensor, suffix_tensor)
+
+        merged["input_ids"] = self._make_input_ids_tensor(sample["input_ids"], device=device)
+        merged["input_ids_cpu"] = self._make_input_ids_tensor(sample["input_ids"], device="cpu")
+        return merged
+
+    @staticmethod
+    def _concat_feature_tensors(prefix_tensor, suffix_tensor):
+        import torch
+
+        if prefix_tensor.dim() == 1:
+            return torch.cat([prefix_tensor, suffix_tensor], dim=0)
+        return torch.cat([prefix_tensor, suffix_tensor], dim=0)
+
+    def _slice_prefix_sample(self, sample: Mapping[str, Any], prefix_len: int) -> dict[str, Any]:
+        prefix_sample = dict(sample)
+        prefix_sample["input_ids"] = list(sample["input_ids"][:prefix_len])
+        packed_loss_mask = sample.get("packed_loss_mask")
+        if isinstance(packed_loss_mask, str):
+            prefix_sample["packed_loss_mask"] = packed_loss_mask[:prefix_len]
+        prefix_sample["sample_key"] = self.build_sample_key_from_values(
+            input_ids=prefix_sample["input_ids"],
+            packed_loss_mask=prefix_sample.get("packed_loss_mask"),
+            multimodal_inputs=prefix_sample.get("multimodal_inputs"),
+            data_id=prefix_sample.get("data_id"),
+        )
+        return prefix_sample
+
+    @staticmethod
+    def _make_input_ids_tensor(input_ids, *, device):
+        import torch
+
+        return torch.tensor(list(input_ids), dtype=torch.int64, device=device)
 
     @staticmethod
     def _torch_dtypes(dtypes: dict[str, str]) -> dict[str, Any]:

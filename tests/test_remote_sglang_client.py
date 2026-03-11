@@ -58,6 +58,7 @@ def test_request_features_success():
     assert handle.sample_key == "dataset:1"
     assert handle.mooncake_key == "feature:dataset:1"
     assert handle.tensor_shapes["hidden_states"] == (2, 8)
+    assert handle.cached_tokens == 0
 
 
 def test_request_features_service_error():
@@ -160,7 +161,7 @@ def test_request_features_missing_store_keys():
             )
 
 
-def test_request_features_rejects_cached_prompt_tokens():
+def test_request_features_with_cached_prompt_tokens_returns_suffix_handle():
     client = RemoteSGLangClient(
         "http://127.0.0.1:8000",
         timeout_seconds=1.0,
@@ -170,21 +171,25 @@ def test_request_features_rejects_cached_prompt_tokens():
     )
     payload = {
         "meta_info": {
-            "prompt_tokens": 2,
+            "prompt_tokens": 4,
             "cached_tokens": 1,
             "spec_training_mooncake_store_keys": ["feature:dataset:1"],
         }
     }
 
     with patch("urllib.request.urlopen", return_value=_MockHTTPResponse(payload)):
-        with pytest.raises(RemoteSGLangError, match="disable-radix-cache"):
-            client.request_features(
-                sample_key="dataset:1",
-                input_ids=[1, 2],
-                packed_loss_mask="mask",
-                multimodal_inputs=None,
-                feature_schema_version="eagle3.v1",
-            )
+        handle = client.request_features(
+            sample_key="dataset:1",
+            input_ids=[1, 2, 3, 4],
+            packed_loss_mask="1111",
+            multimodal_inputs=None,
+            feature_schema_version="eagle3.v1",
+        )
+
+    assert handle.cached_tokens == 1
+    assert handle.prefix_sample_key is not None
+    assert handle.tensor_shapes["hidden_states"] == (3, 8)
+    assert handle.tensor_shapes["input_ids"] == (4,)
 
 
 def test_normalize_dtype_object_to_string():

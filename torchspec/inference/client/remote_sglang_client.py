@@ -1,4 +1,5 @@
 import json
+import hashlib
 import time
 import urllib.error
 import urllib.request
@@ -64,6 +65,7 @@ class RemoteSGLangClient:
                     body=body,
                     sample_key=sample_key,
                     input_ids=input_ids,
+                    packed_loss_mask=packed_loss_mask,
                     feature_schema_version=feature_schema_version,
                 )
             except urllib.error.HTTPError as exc:
@@ -85,6 +87,7 @@ class RemoteSGLangClient:
         body: dict[str, Any] | list[dict[str, Any]],
         sample_key: str,
         input_ids: list[int],
+        packed_loss_mask: str,
         feature_schema_version: str,
     ) -> FeatureHandle:
         if isinstance(body, list):
@@ -106,20 +109,22 @@ class RemoteSGLangClient:
             if not store_keys:
                 raise RemoteSGLangError("Spec training response missing mooncake store keys")
             cached_tokens = int(meta_info.get("cached_tokens", 0) or 0)
+            total_seq_len = int(meta_info.get("prompt_tokens", len(input_ids)))
+            suffix_seq_len = max(total_seq_len - cached_tokens, 0)
+            prefix_sample_key = None
             if cached_tokens > 0:
-                raise RemoteSGLangError(
-                    "Remote SGLang returned cached prompt tokens for spec training "
-                    f"(cached_tokens={cached_tokens}). Launch the server with "
-                    "--disable-radix-cache so Mooncake stores full-sequence hidden states."
+                prefix_sample_key = self._build_sample_key(
+                    input_ids=input_ids[:cached_tokens],
+                    packed_loss_mask=packed_loss_mask[:cached_tokens],
+                    multimodal_inputs=None,
                 )
-            seq_len = int(meta_info.get("prompt_tokens", len(input_ids)))
             return FeatureHandle(
                 sample_key=sample_key,
                 mooncake_key=store_keys[0],
                 tensor_shapes={
-                    "hidden_states": (seq_len, self.hidden_size * self.num_aux_hidden_layers),
-                    "input_ids": (seq_len,),
-                    "last_hidden_states": (seq_len, self.hidden_size),
+                    "hidden_states": (suffix_seq_len, self.hidden_size * self.num_aux_hidden_layers),
+                    "input_ids": (total_seq_len,),
+                    "last_hidden_states": (suffix_seq_len, self.hidden_size),
                 },
                 tensor_dtypes={
                     "hidden_states": self.torch_dtype,
@@ -129,6 +134,8 @@ class RemoteSGLangClient:
                 feature_schema_version=feature_schema_version,
                 created_at=time.time(),
                 expires_at=None,
+                prefix_sample_key=prefix_sample_key,
+                cached_tokens=cached_tokens,
             )
         except KeyError as exc:
             raise RemoteSGLangError(f"Malformed feature handle response: missing {exc.args[0]}") from exc
@@ -141,3 +148,18 @@ class RemoteSGLangClient:
         if callable(dtype_name):
             return str(value).replace("torch.", "")
         return "bfloat16"
+
+    @staticmethod
+    def _build_sample_key(
+        *,
+        input_ids: list[int],
+        packed_loss_mask: str,
+        multimodal_inputs: Optional[dict[str, Any]],
+    ) -> str:
+        payload = {
+            "input_ids": input_ids,
+            "packed_loss_mask": packed_loss_mask,
+            "multimodal_inputs": multimodal_inputs,
+        }
+        encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+        return hashlib.sha256(encoded.encode("utf-8")).hexdigest()

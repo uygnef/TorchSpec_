@@ -50,3 +50,22 @@ def test_cache_manifest_delete(tmp_path):
     manifest.delete("sample-3")
 
     assert manifest.get("sample-3") is None
+
+
+def test_cache_manifest_persists_composite_fields(tmp_path):
+    manifest = CacheManifest(str(tmp_path / "feature_cache.sqlite3"))
+    handle = FeatureHandle(
+        sample_key="sample-4",
+        mooncake_key="feature:sample-4",
+        tensor_shapes={"hidden_states": (2, 4)},
+        tensor_dtypes={"hidden_states": "bfloat16"},
+        feature_schema_version="eagle3.v1",
+        created_at=400.0,
+        prefix_sample_key="sample-prefix",
+        cached_tokens=3,
+    )
+
+    manifest.upsert(handle)
+    loaded = manifest.get("sample-4")
+
+    assert loaded == handle
