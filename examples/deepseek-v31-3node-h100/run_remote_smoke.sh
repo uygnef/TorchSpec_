@@ -43,8 +43,19 @@ TRAIN_GPUS="${TRAIN_GPUS:-8}"
 TRAIN_NODES="${TRAIN_NODES:-1}"
 OUTPUT_DIR="${OUTPUT_DIR:-/nfs/ofs-llab-volume/users/fengyu/o/deepseek_remote_smoke}"
 CACHE_DIR="${CACHE_DIR:-/nfs/ofs-llab-volume/users/fengyu/c/deepseek_remote_smoke}"
-MOONCAKE_MASTER_ADDRESS="${MOONCAKE_MASTER_ADDRESS:-127.0.0.1:50051}"
-MOONCAKE_METADATA_SERVER="${MOONCAKE_METADATA_SERVER:-127.0.0.1}"
+LOCAL_IP="$(python - <<'PY'
+import socket
+s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+try:
+    s.connect(("8.8.8.8", 80))
+    print(s.getsockname()[0])
+finally:
+    s.close()
+PY
+)"
+CHECK_CONFIG="${CHECK_CONFIG:-true}"
+MOONCAKE_MASTER_ADDRESS="${MOONCAKE_MASTER_ADDRESS:-$LOCAL_IP:50051}"
+MOONCAKE_METADATA_SERVER="${MOONCAKE_METADATA_SERVER:-$LOCAL_IP}"
 MOONCAKE_METADATA_PORT="${MOONCAKE_METADATA_PORT:-50052}"
 
 LOG_DIR="$WORKING_DIR/running_logs"
@@ -66,17 +77,21 @@ else
   exit 1
 fi
 
-python -m torchspec.train_entry \
-  --print-config-only \
-  --config configs/sglang_deepseek_v31_3node.yaml \
-  dataset.train_data_path="$TRAIN_DATA_PATH" \
-  training.num_train_steps=1 \
-  output_dir="$OUTPUT_DIR/config_only" \
-  cache_dir="$CACHE_DIR/config_only" \
-  inference.remote_sglang.endpoint="$REMOTE_SGLANG_ENDPOINT" \
-  mooncake.master_server_address="$MOONCAKE_MASTER_ADDRESS" \
-  mooncake.metadata_server="$MOONCAKE_METADATA_SERVER" \
-  mooncake.metadata_port="$MOONCAKE_METADATA_PORT"
+if [ "$CHECK_CONFIG" = "true" ]; then
+  python -m torchspec.train_entry \
+    --print-config-only \
+    --config configs/sglang_deepseek_v31_3node.yaml \
+    dataset.train_data_path="$TRAIN_DATA_PATH" \
+    training.num_train_steps=1 \
+    output_dir="$OUTPUT_DIR/config_only" \
+    cache_dir="$CACHE_DIR/config_only" \
+    inference.remote_sglang.endpoint="$REMOTE_SGLANG_ENDPOINT" \
+    mooncake.master_server_address="$MOONCAKE_MASTER_ADDRESS" \
+    mooncake.metadata_server="$MOONCAKE_METADATA_SERVER" \
+    mooncake.metadata_port="$MOONCAKE_METADATA_PORT"
+else
+  echo "Skipping config-only check because CHECK_CONFIG=$CHECK_CONFIG"
+fi
 
 REMOTE_SGLANG_ENDPOINT="$REMOTE_SGLANG_ENDPOINT" \
 MOONCAKE_MASTER_ADDRESS="$MOONCAKE_MASTER_ADDRESS" \

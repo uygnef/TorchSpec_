@@ -62,3 +62,11 @@ Training machine:
 REMOTE_SGLANG_ENDPOINT=http://<sglang_host>:30000 \
 bash examples/qwen3-8b-single-node/run_remote_smoke.sh
 ```
+
+If you want to skip the config-only precheck:
+
+```bash
+CHECK_CONFIG=false \
+REMOTE_SGLANG_ENDPOINT=http://<sglang_host>:30000 \
+bash examples/qwen3-8b-single-node/run_remote_smoke.sh
+```

@@ -73,6 +73,15 @@ REMOTE_SGLANG_ENDPOINT=http://<sglang_host>:30000 \
 bash examples/deepseek-v31-3node-h100/run_remote_smoke.sh
 ```
 
+Skip the config-only precheck if you want the script to go straight into training:
+
+```bash
+NODE_ROLE=head \
+CHECK_CONFIG=false \
+REMOTE_SGLANG_ENDPOINT=http://<sglang_host>:30000 \
+bash examples/deepseek-v31-3node-h100/run_remote_smoke.sh
+```
+
 ## Common customizations
 
 ```bash
