@@ -158,11 +158,14 @@ class FeatureCache:
         packed_loss_mask = sample.get("packed_loss_mask")
         if isinstance(packed_loss_mask, str):
             prefix_sample["packed_loss_mask"] = packed_loss_mask[:prefix_len]
+        # Prefix cache entries must be keyed by their actual prefix payload, not by
+        # the parent sample's data_id/sample_key, otherwise cached-prefix stitching
+        # can recurse back into the same manifest entry.
+        prefix_sample.pop("data_id", None)
         prefix_sample["sample_key"] = self.build_sample_key_from_values(
             input_ids=prefix_sample["input_ids"],
             packed_loss_mask=prefix_sample.get("packed_loss_mask"),
             multimodal_inputs=prefix_sample.get("multimodal_inputs"),
-            data_id=prefix_sample.get("data_id"),
         )
         return prefix_sample
 

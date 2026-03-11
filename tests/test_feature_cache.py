@@ -240,3 +240,26 @@ def test_feature_cache_fetches_missing_prefix_on_demand(tmp_path):
     assert remote_client.calls == ["sample-5", prefix_key]
     assert result["hidden_states"].shape == (3, 4)
     assert manifest.get(prefix_key) == prefix_handle
+
+
+def test_slice_prefix_sample_ignores_parent_data_id():
+    cache = FeatureCache(manifest=object(), remote_client=None, mooncake_store=None)
+
+    prefix_sample = cache._slice_prefix_sample(
+        {
+            "data_id": "dataset:123",
+            "input_ids": [1, 2, 3],
+            "packed_loss_mask": "111",
+            "multimodal_inputs": None,
+        },
+        2,
+    )
+
+    expected_key = FeatureCache.build_sample_key_from_values(
+        input_ids=[1, 2],
+        packed_loss_mask="11",
+        multimodal_inputs=None,
+    )
+
+    assert prefix_sample["sample_key"] == expected_key
+    assert "data_id" not in prefix_sample
