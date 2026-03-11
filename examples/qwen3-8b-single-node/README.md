@@ -74,3 +74,4 @@ bash examples/qwen3-8b-single-node/run_remote_smoke.sh
 ```
 
 In job environments that expose `DISTRIBUTED_MASTER_HOSTS`, the script will use that hostname for Mooncake by default. If you want to force DNS resolution to a concrete IP, add `RESOLVE_MASTER_IP=true`.
+By default the smoke script does not pin Mooncake ports; it lets TorchSpec auto-pick free ports unless you explicitly pass `MOONCAKE_MASTER_ADDRESS` or `MOONCAKE_METADATA_PORT`.

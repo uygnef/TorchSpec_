@@ -60,13 +60,18 @@ finally:
 PY
 )"
 RESOLVE_MASTER_IP="${RESOLVE_MASTER_IP:-false}"
-MASTER_HOST_CANDIDATE="${MOONCAKE_METADATA_SERVER:-${DISTRIBUTED_MASTER_HOSTS:-${HEAD_IP:-$LOCAL_IP}}}"
-if [ "$RESOLVE_MASTER_IP" = "true" ]; then
+if [ -n "${MOONCAKE_METADATA_SERVER:-}" ]; then
+  MASTER_HOST_CANDIDATE="$MOONCAKE_METADATA_SERVER"
+elif [ -n "${DISTRIBUTED_MASTER_HOSTS:-}" ]; then
+  MASTER_HOST_CANDIDATE="$DISTRIBUTED_MASTER_HOSTS"
+elif [ -n "${HEAD_IP:-}" ]; then
+  MASTER_HOST_CANDIDATE="$HEAD_IP"
+else
+  MASTER_HOST_CANDIDATE=""
+fi
+if [ -n "$MASTER_HOST_CANDIDATE" ] && [ "$RESOLVE_MASTER_IP" = "true" ]; then
   MASTER_HOST_CANDIDATE="$(resolve_host_with_python "$MASTER_HOST_CANDIDATE")"
 fi
-MOONCAKE_MASTER_ADDRESS="${MOONCAKE_MASTER_ADDRESS:-$MASTER_HOST_CANDIDATE:50051}"
-MOONCAKE_METADATA_SERVER="${MOONCAKE_METADATA_SERVER:-$MASTER_HOST_CANDIDATE}"
-MOONCAKE_METADATA_PORT="${MOONCAKE_METADATA_PORT:-50052}"
 
 CONFIG_FILE="${CONFIG_FILE:-$ROOT_DIR/configs/sglang_deepseek_v31_3node.yaml}"
 
@@ -87,9 +92,9 @@ echo "  Training nodes:  $TRAIN_NODES"
 echo "  Training GPUs:   $TRAIN_GPUS per node"
 echo "  Remote endpoint: $REMOTE_SGLANG_ENDPOINT"
 echo "  Feature cache:   $FEATURE_CACHE_ENABLED ($FEATURE_CACHE_INDEX)"
-echo "  Mooncake master: $MOONCAKE_MASTER_ADDRESS"
-echo "  Metadata server: $MOONCAKE_METADATA_SERVER:$MOONCAKE_METADATA_PORT"
-echo "  Metadata source: ${DISTRIBUTED_MASTER_HOSTS:-${HEAD_IP:-local_ip}}"
+echo "  Mooncake master: ${MOONCAKE_MASTER_ADDRESS:-auto}"
+echo "  Metadata server: ${MOONCAKE_METADATA_SERVER:-${MASTER_HOST_CANDIDATE:-auto}}:${MOONCAKE_METADATA_PORT:-auto}"
+echo "  Metadata source: ${DISTRIBUTED_MASTER_HOSTS:-${HEAD_IP:-auto}}"
 echo "  draft config:    auto-generated from target model unless overridden"
 echo "=============================================="
 
@@ -101,21 +106,33 @@ if ! ray status &>/dev/null; then
   exit 1
 fi
 
+TRAIN_ENTRY_ARGS=(
+  --config "$CONFIG_FILE" \
+  "model.target_model_path=$MODEL_PATH" \
+  "dataset.chat_template=$CHAT_TEMPLATE" \
+  "training.training_num_nodes=$TRAIN_NODES" \
+  "training.training_num_gpus_per_node=$TRAIN_GPUS" \
+  "inference.mode=remote_sglang" \
+  "inference.remote_sglang.endpoint=$REMOTE_SGLANG_ENDPOINT" \
+  "feature_cache.enabled=$FEATURE_CACHE_ENABLED" \
+  "feature_cache.index_path=$FEATURE_CACHE_INDEX" \
+  "dataset.last_turn_loss_only=true"
+)
+if [ -n "${MOONCAKE_MASTER_ADDRESS:-}" ]; then
+  TRAIN_ENTRY_ARGS+=("mooncake.master_server_address=$MOONCAKE_MASTER_ADDRESS")
+fi
+if [ -n "${MOONCAKE_METADATA_SERVER:-}" ]; then
+  TRAIN_ENTRY_ARGS+=("mooncake.metadata_server=$MOONCAKE_METADATA_SERVER")
+elif [ -n "$MASTER_HOST_CANDIDATE" ]; then
+  TRAIN_ENTRY_ARGS+=("mooncake.metadata_server=$MASTER_HOST_CANDIDATE")
+fi
+if [ -n "${MOONCAKE_METADATA_PORT:-}" ]; then
+  TRAIN_ENTRY_ARGS+=("mooncake.metadata_port=$MOONCAKE_METADATA_PORT")
+fi
+
 echo "=== Launching training ==="
 python3 -m torchspec.train_entry \
-  --config "$CONFIG_FILE" \
-  model.target_model_path="$MODEL_PATH" \
-  dataset.chat_template="$CHAT_TEMPLATE" \
-  training.training_num_nodes="$TRAIN_NODES" \
-  training.training_num_gpus_per_node="$TRAIN_GPUS" \
-  inference.mode="remote_sglang" \
-  inference.remote_sglang.endpoint="$REMOTE_SGLANG_ENDPOINT" \
-  feature_cache.enabled="$FEATURE_CACHE_ENABLED" \
-  feature_cache.index_path="$FEATURE_CACHE_INDEX" \
-  mooncake.master_server_address="$MOONCAKE_MASTER_ADDRESS" \
-  mooncake.metadata_server="$MOONCAKE_METADATA_SERVER" \
-  mooncake.metadata_port="$MOONCAKE_METADATA_PORT" \
-  dataset.last_turn_loss_only=true \
+  "${TRAIN_ENTRY_ARGS[@]}" \
   "$@"
 
 echo "=============================================="

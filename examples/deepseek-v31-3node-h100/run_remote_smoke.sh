@@ -65,13 +65,18 @@ PY
 )"
 RESOLVE_MASTER_IP="${RESOLVE_MASTER_IP:-false}"
 CHECK_CONFIG="${CHECK_CONFIG:-true}"
-MASTER_HOST_CANDIDATE="${MOONCAKE_METADATA_SERVER:-${DISTRIBUTED_MASTER_HOSTS:-${HEAD_IP:-$LOCAL_IP}}}"
-if [ "$RESOLVE_MASTER_IP" = "true" ]; then
+if [ -n "${MOONCAKE_METADATA_SERVER:-}" ]; then
+  MASTER_HOST_CANDIDATE="$MOONCAKE_METADATA_SERVER"
+elif [ -n "${DISTRIBUTED_MASTER_HOSTS:-}" ]; then
+  MASTER_HOST_CANDIDATE="$DISTRIBUTED_MASTER_HOSTS"
+elif [ -n "${HEAD_IP:-}" ]; then
+  MASTER_HOST_CANDIDATE="$HEAD_IP"
+else
+  MASTER_HOST_CANDIDATE=""
+fi
+if [ -n "$MASTER_HOST_CANDIDATE" ] && [ "$RESOLVE_MASTER_IP" = "true" ]; then
   MASTER_HOST_CANDIDATE="$(resolve_host_with_python "$MASTER_HOST_CANDIDATE")"
 fi
-MOONCAKE_MASTER_ADDRESS="${MOONCAKE_MASTER_ADDRESS:-$MASTER_HOST_CANDIDATE:50051}"
-MOONCAKE_METADATA_SERVER="${MOONCAKE_METADATA_SERVER:-$MASTER_HOST_CANDIDATE}"
-MOONCAKE_METADATA_PORT="${MOONCAKE_METADATA_PORT:-50052}"
 
 LOG_DIR="$WORKING_DIR/running_logs"
 mkdir -p "$LOG_DIR"
@@ -79,9 +84,28 @@ TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
 LOG_FILE="$LOG_DIR/deepseek_v31_remote_smoke_${NODE_ROLE}_${TIMESTAMP}.log"
 exec > >(tee -a "$LOG_FILE") 2>&1
 echo "Logging to: $LOG_FILE"
-echo "Mooncake metadata host source: ${DISTRIBUTED_MASTER_HOSTS:-${HEAD_IP:-local_ip}}"
-echo "Mooncake metadata target: $MOONCAKE_METADATA_SERVER:$MOONCAKE_METADATA_PORT"
-echo "Mooncake master target: $MOONCAKE_MASTER_ADDRESS"
+
+TRAIN_ENTRY_ARGS=(
+  --config configs/sglang_deepseek_v31_3node.yaml
+  "dataset.train_data_path=$TRAIN_DATA_PATH"
+  "training.num_train_steps=1"
+  "inference.remote_sglang.endpoint=$REMOTE_SGLANG_ENDPOINT"
+)
+if [ -n "${MOONCAKE_MASTER_ADDRESS:-}" ]; then
+  TRAIN_ENTRY_ARGS+=("mooncake.master_server_address=$MOONCAKE_MASTER_ADDRESS")
+fi
+if [ -n "${MOONCAKE_METADATA_SERVER:-}" ]; then
+  TRAIN_ENTRY_ARGS+=("mooncake.metadata_server=$MOONCAKE_METADATA_SERVER")
+elif [ -n "$MASTER_HOST_CANDIDATE" ]; then
+  TRAIN_ENTRY_ARGS+=("mooncake.metadata_server=$MASTER_HOST_CANDIDATE")
+fi
+if [ -n "${MOONCAKE_METADATA_PORT:-}" ]; then
+  TRAIN_ENTRY_ARGS+=("mooncake.metadata_port=$MOONCAKE_METADATA_PORT")
+fi
+
+echo "Mooncake metadata host source: ${DISTRIBUTED_MASTER_HOSTS:-${HEAD_IP:-auto}}"
+echo "Mooncake metadata target: ${MOONCAKE_METADATA_SERVER:-${MASTER_HOST_CANDIDATE:-auto}}:${MOONCAKE_METADATA_PORT:-auto}"
+echo "Mooncake master target: ${MOONCAKE_MASTER_ADDRESS:-auto}"
 
 if [ "$NODE_ROLE" = "head" ]; then
   NODE_ROLE=head bash examples/deepseek-v31-3node-h100/setup_ray_cluster.sh
@@ -98,24 +122,28 @@ fi
 if [ "$CHECK_CONFIG" = "true" ]; then
   python -m torchspec.train_entry \
     --print-config-only \
-    --config configs/sglang_deepseek_v31_3node.yaml \
-    dataset.train_data_path="$TRAIN_DATA_PATH" \
-    training.num_train_steps=1 \
     output_dir="$OUTPUT_DIR/config_only" \
     cache_dir="$CACHE_DIR/config_only" \
-    inference.remote_sglang.endpoint="$REMOTE_SGLANG_ENDPOINT" \
-    mooncake.master_server_address="$MOONCAKE_MASTER_ADDRESS" \
-    mooncake.metadata_server="$MOONCAKE_METADATA_SERVER" \
-    mooncake.metadata_port="$MOONCAKE_METADATA_PORT"
+    "${TRAIN_ENTRY_ARGS[@]}"
 else
   echo "Skipping config-only check because CHECK_CONFIG=$CHECK_CONFIG"
 fi
 
-REMOTE_SGLANG_ENDPOINT="$REMOTE_SGLANG_ENDPOINT" \
-MOONCAKE_MASTER_ADDRESS="$MOONCAKE_MASTER_ADDRESS" \
-MOONCAKE_METADATA_SERVER="$MOONCAKE_METADATA_SERVER" \
-MOONCAKE_METADATA_PORT="$MOONCAKE_METADATA_PORT" \
-bash examples/deepseek-v31-3node-h100/run.sh \
+RUN_ENV=()
+RUN_ENV+=("REMOTE_SGLANG_ENDPOINT=$REMOTE_SGLANG_ENDPOINT")
+if [ -n "${MOONCAKE_MASTER_ADDRESS:-}" ]; then
+  RUN_ENV+=("MOONCAKE_MASTER_ADDRESS=$MOONCAKE_MASTER_ADDRESS")
+fi
+if [ -n "${MOONCAKE_METADATA_SERVER:-}" ]; then
+  RUN_ENV+=("MOONCAKE_METADATA_SERVER=$MOONCAKE_METADATA_SERVER")
+elif [ -n "$MASTER_HOST_CANDIDATE" ]; then
+  RUN_ENV+=("MOONCAKE_METADATA_SERVER=$MASTER_HOST_CANDIDATE")
+fi
+if [ -n "${MOONCAKE_METADATA_PORT:-}" ]; then
+  RUN_ENV+=("MOONCAKE_METADATA_PORT=$MOONCAKE_METADATA_PORT")
+fi
+
+env "${RUN_ENV[@]}" bash examples/deepseek-v31-3node-h100/run.sh \
   dataset.train_data_path="$TRAIN_DATA_PATH" \
   training.num_train_steps=1 \
   output_dir="$OUTPUT_DIR/train" \

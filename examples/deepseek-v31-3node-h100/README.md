@@ -84,6 +84,7 @@ bash examples/deepseek-v31-3node-h100/run_remote_smoke.sh
 ```
 
 In job environments that expose `DISTRIBUTED_MASTER_HOSTS`, the scripts will use that hostname for Mooncake by default. If you want to force DNS resolution to a concrete IP, add `RESOLVE_MASTER_IP=true`.
+By default the smoke/train scripts do not pin Mooncake ports; they let TorchSpec auto-pick free ports unless you explicitly pass `MOONCAKE_MASTER_ADDRESS` or `MOONCAKE_METADATA_PORT`.
 
 ## Common customizations
 

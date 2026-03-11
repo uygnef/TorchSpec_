@@ -33,13 +33,13 @@ feature_cache:
   stale_on_missing: true
 
 mooncake:
-  master_server_address: 127.0.0.1:50051
-  metadata_server: 127.0.0.1
-  metadata_port: 50052
+  master_server_address: null
+  metadata_server: null
+  metadata_port: null
   global_segment_size: 8GB
   local_buffer_size: 2GB
   protocol: tcp
-  local_hostname: 127.0.0.1
+  local_hostname: null
   enable_gpu_direct: false
   max_seq_len: 8192
   hidden_dim: 4096
