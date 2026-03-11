@@ -1,0 +1,48 @@
+# Example config for decoupled remote SGLang + Mooncake feature caching.
+
+model:
+  target_model_path: /path/to/Qwen3-8B
+  trust_remote_code: false
+  target_model_backend: sglang
+
+dataset:
+  train_data_path: /path/to/train.jsonl
+  eval_data_path: null
+  chat_template: llama3
+  defer_tokenization: false
+
+training:
+  training_num_nodes: 1
+  training_num_gpus_per_node: 8
+  micro_batch_size: 2
+  num_epochs: 2
+  prefetch_depth: 2
+
+inference:
+  mode: remote_sglang
+  remote_sglang:
+    endpoint: http://127.0.0.1:30000
+    timeout_seconds: 60.0
+    max_retries: 2
+    feature_schema_version: eagle3.v1
+
+feature_cache:
+  enabled: true
+  index_path: ./cache/remote_sglang_feature_cache.sqlite3
+  delete_after_read: false
+  stale_on_missing: true
+
+mooncake:
+  master_server_address: 127.0.0.1:50051
+  metadata_server: 127.0.0.1
+  metadata_port: 50052
+  global_segment_size: 8GB
+  local_buffer_size: 2GB
+  protocol: tcp
+  local_hostname: 127.0.0.1
+  enable_gpu_direct: false
+  max_seq_len: 8192
+  hidden_dim: 4096
+
+cache_dir: ./cache
+output_dir: ./outputs/remote_sglang_qwen3_8b

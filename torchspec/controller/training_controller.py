@@ -579,6 +579,9 @@ class AsyncTrainingController:
 
     def try_dispatch_eval_batch(self) -> bool:
         """Dispatch one eval batch from the pool if enough samples are available."""
+        if getattr(self.args, "inference_mode", "local") == "remote_sglang":
+            return self._try_dispatch_remote_eval_batch()
+
         bs = self.eval_dispatch_batch_size
         with self._eval_pool_lock:
             if len(self.eval_pool) < bs:
@@ -589,6 +592,21 @@ class AsyncTrainingController:
         self._eval_dispatched_samples += bs
         logger.debug(
             f"Eval: dispatched batch ({self._eval_dispatched_samples}/"
+            f"{self._eval_expected_count} samples)"
+        )
+        return True
+
+    def _try_dispatch_remote_eval_batch(self) -> bool:
+        bs = self.eval_dispatch_batch_size
+        with self._prompt_lock:
+            if len(self.prompt_buffer) < bs:
+                return False
+            batch_prompts = [self.prompt_buffer.popleft() for _ in range(bs)]
+
+        self._dispatch_remote_samples_to_queues(batch_prompts, self.eval_queues)
+        self._eval_dispatched_samples += bs
+        logger.debug(
+            f"Eval(remote): dispatched batch ({self._eval_dispatched_samples}/"
             f"{self._eval_expected_count} samples)"
         )
         return True
