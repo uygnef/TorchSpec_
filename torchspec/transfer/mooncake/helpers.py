@@ -18,9 +18,6 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
-from torchspec.utils.logging import logger
-
-
 def _format_bytes(size: int) -> str:
     """Format bytes in a human-readable form."""
     if size < 0:
@@ -67,13 +64,5 @@ def calculate_eagle3_buffer_size(
 
     alignment = 256
     aligned_size = ((total_with_margin + alignment - 1) // alignment) * alignment
-
-    logger.debug(
-        "Calculated Eagle3 buffer size: %.1fMB (seq=%s, batch=%s, hidden=%s)",
-        aligned_size / (1024**2),
-        max_seq_len,
-        batch_size,
-        hidden_dim,
-    )
 
     return aligned_size

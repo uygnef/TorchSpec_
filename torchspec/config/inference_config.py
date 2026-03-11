@@ -27,9 +27,10 @@ Power users can pass arbitrary extra kwargs to sgl.Engine via ``extra_args``.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, Optional
+from typing import TYPE_CHECKING, Any, Dict, Optional
 
-from torchspec.config.mooncake_config import MooncakeConfig
+if TYPE_CHECKING:
+    from torchspec.config.mooncake_config import MooncakeConfig
 
 
 @dataclass
@@ -143,4 +144,4 @@ class HFInferenceConfig:
     torch_dtype: str = "bfloat16"
     trust_remote_code: bool = False
     aux_hidden_states_layers: Optional[list[int]] = None
-    mooncake_config: Optional[MooncakeConfig] = None
+    mooncake_config: Optional["MooncakeConfig"] = None
