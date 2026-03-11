@@ -26,7 +26,7 @@ PY
 REMOTE_SGLANG_ENDPOINT="${REMOTE_SGLANG_ENDPOINT:?REMOTE_SGLANG_ENDPOINT must be set}"
 TRAIN_DATA_PATH="${TRAIN_DATA_PATH:-$WORKING_DIR/examples/data/sample_conversations.jsonl}"
 MODEL_PATH="${MODEL_PATH:-/nfs/ofs-llm-ssd/models/opensource/Qwen3-8B}"
-TRAIN_GPUS="${TRAIN_GPUS:-2}"
+TRAIN_GPUS="${TRAIN_GPUS:-4}"
 OUTPUT_DIR="${OUTPUT_DIR:-/nfs/ofs-llab-volume/users/fengyu/o/qwen_remote_smoke}"
 CACHE_DIR="${CACHE_DIR:-/nfs/ofs-llab-volume/users/fengyu/c/qwen_remote_smoke}"
 LOCAL_IP="$(python - <<'PY'

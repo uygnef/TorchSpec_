@@ -13,7 +13,7 @@ dataset:
 
 training:
   training_num_nodes: 1
-  training_num_gpus_per_node: 8
+  training_num_gpus_per_node: 4
   micro_batch_size: 2
   num_epochs: 2
   prefetch_depth: 2
@@ -22,7 +22,7 @@ inference:
   mode: remote_sglang
   remote_sglang:
     endpoint: http://127.0.0.1:30000
-    timeout_seconds: 60.0
+    timeout_seconds: 180.0
     max_retries: 2
     feature_schema_version: eagle3.v1
 
