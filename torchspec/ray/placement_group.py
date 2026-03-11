@@ -110,7 +110,33 @@ def _ensure_ray_initialized():
         logger.warning("No existing Ray cluster found, starting a local instance")
         os.environ.update(get_torchspec_env_vars())
         os.environ["TORCHSPEC_RAY_SKIP_RUNTIME_ENV"] = "1"
-        ray.init(ignore_reinit_error=True, include_dashboard=False)
+        ray.init(ignore_reinit_error=True, **_get_local_ray_init_kwargs())
+
+
+def _find_free_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("", 0))
+        return sock.getsockname()[1]
+
+
+def _get_local_ray_init_kwargs() -> dict:
+    """Allocate explicit local Ray agent ports to avoid stale-port collisions."""
+    kwargs = {
+        "include_dashboard": False,
+        "runtime_env_agent_port": _find_free_port(),
+        "dashboard_agent_listen_port": _find_free_port(),
+        "metrics_agent_port": _find_free_port(),
+        "metrics_export_port": _find_free_port(),
+    }
+    logger.info(
+        "Starting local Ray with explicit agent ports: runtime_env_agent_port=%s, "
+        "dashboard_agent_listen_port=%s, metrics_agent_port=%s, metrics_export_port=%s",
+        kwargs["runtime_env_agent_port"],
+        kwargs["dashboard_agent_listen_port"],
+        kwargs["metrics_agent_port"],
+        kwargs["metrics_export_port"],
+    )
+    return kwargs
 
 
 def _get_expected_gpu_count(args) -> int:
