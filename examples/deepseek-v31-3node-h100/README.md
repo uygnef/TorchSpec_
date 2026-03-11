@@ -22,7 +22,15 @@ Default assumptions:
 
 ## How to run
 
-### 1. Start the Ray cluster
+### 1. Start the remote SGLang service
+
+On the inference/service machine:
+
+```bash
+bash examples/deepseek-v31-3node-h100/launch_remote_sglang_server.sh
+```
+
+### 2. Start the Ray cluster
 
 On the head node:
 
@@ -36,7 +44,7 @@ On each worker node:
 HEAD_IP=<node0_ip> NODE_ROLE=worker bash examples/deepseek-v31-3node-h100/setup_ray_cluster.sh
 ```
 
-### 2. Launch training
+### 3. Launch training
 
 On the head node:
 
@@ -45,12 +53,22 @@ REMOTE_SGLANG_ENDPOINT=http://<sglang_host>:30000 \
 bash examples/deepseek-v31-3node-h100/run.sh
 ```
 
-### 3. Launch through the cluster job wrapper
+### 4. Launch through the cluster job wrapper
 
 If you run in the same multi-node job environment as `debug` branch `run_job.sh`, use:
 
 ```bash
 bash examples/deepseek-v31-3node-h100/run_job.sh
+```
+
+### 5. One-command smoke on the training machine
+
+On the head node:
+
+```bash
+NODE_ROLE=head \
+REMOTE_SGLANG_ENDPOINT=http://<sglang_host>:30000 \
+bash examples/deepseek-v31-3node-h100/run_remote_smoke.sh
 ```
 
 ## Common customizations
