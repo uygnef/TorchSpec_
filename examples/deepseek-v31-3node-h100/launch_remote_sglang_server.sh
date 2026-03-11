@@ -42,7 +42,7 @@ echo "Logging to: $LOG_FILE"
 
 MODEL_PATH="${MODEL_PATH:-/nfs/ofs-llm-ssd/models/opensource/DeepSeek-V3.1}"
 TP_SIZE="${TP_SIZE:-16}"
-PORT="${PORT:-30000}"
+PORT="${PORT:-${LUBAN_AVAILABLE_PORT_1:-30000}}"
 HOST="${HOST:-0.0.0.0}"
 LOCAL_IP="$(python - <<'PY'
 import socket

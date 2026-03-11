@@ -56,6 +56,8 @@ Service machine:
 bash examples/qwen3-8b-single-node/launch_remote_sglang_server.sh
 ```
 
+In Luban job environments, the server port defaults to `LUBAN_AVAILABLE_PORT_1` when present.
+
 Training machine:
 
 ```bash
