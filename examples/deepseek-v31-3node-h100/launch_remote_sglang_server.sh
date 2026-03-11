@@ -41,7 +41,7 @@ exec > >(tee -a "$LOG_FILE") 2>&1
 echo "Logging to: $LOG_FILE"
 
 MODEL_PATH="${MODEL_PATH:-/nfs/ofs-llm-ssd/models/opensource/DeepSeek-V3.1}"
-TP_SIZE="${TP_SIZE:-8}"
+TP_SIZE="${TP_SIZE:-16}"
 PORT="${PORT:-30000}"
 HOST="${HOST:-0.0.0.0}"
 LOCAL_IP="$(python - <<'PY'
@@ -55,7 +55,7 @@ finally:
 PY
 )"
 ADVERTISE_HOST="${ADVERTISE_HOST:-$LOCAL_IP}"
-MEM_FRACTION_STATIC="${MEM_FRACTION_STATIC:-0.7}"
+MEM_FRACTION_STATIC="${MEM_FRACTION_STATIC:-0.75}"
 SGLANG_PYTHON_DIR="${SGLANG_PYTHON_DIR:-/nfs/ofs-llab-volume/users/fengyu/torchspec/_sglang/python}"
 EXTRA_ARGS="${EXTRA_ARGS:-}"
 
