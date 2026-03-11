@@ -1,14 +1,14 @@
 # Example config for decoupled remote SGLang + Mooncake feature caching.
 
 model:
-  target_model_path: /path/to/Qwen3-8B
-  trust_remote_code: false
+  target_model_path: /nfs/ofs-llm-ssd/models/opensource/Qwen3-8B
+  trust_remote_code: true
   target_model_backend: sglang
 
 dataset:
-  train_data_path: /path/to/train.jsonl
+  train_data_path: ./examples/data/sample_conversations.jsonl
   eval_data_path: null
-  chat_template: llama3
+  chat_template: qwen
   defer_tokenization: false
 
 training:
@@ -44,5 +44,5 @@ mooncake:
   max_seq_len: 8192
   hidden_dim: 4096
 
-cache_dir: ./cache
+cache_dir: ./cache/remote_sglang_qwen3_8b
 output_dir: ./outputs/remote_sglang_qwen3_8b

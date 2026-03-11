@@ -45,3 +45,20 @@ CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 ./examples/qwen3-8b-single-node/run.sh \
     training.training_num_gpus_per_node=4 \
     inference.inference_num_gpus=4
 ```
+
+## Remote-SGLang Smoke
+
+If you want to test the new remote-SGLang feature path first, use:
+
+Service machine:
+
+```bash
+bash examples/qwen3-8b-single-node/launch_remote_sglang_server.sh
+```
+
+Training machine:
+
+```bash
+REMOTE_SGLANG_ENDPOINT=http://<sglang_host>:30000 \
+bash examples/qwen3-8b-single-node/run_remote_smoke.sh
+```
