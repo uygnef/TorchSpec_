@@ -39,7 +39,16 @@ CHAT_TEMPLATE="${CHAT_TEMPLATE:-deepseek-v3}"
 REMOTE_SGLANG_ENDPOINT="${REMOTE_SGLANG_ENDPOINT:-http://127.0.0.1:30000}"
 FEATURE_CACHE_ENABLED="${FEATURE_CACHE_ENABLED:-true}"
 FEATURE_CACHE_INDEX="${FEATURE_CACHE_INDEX:-$ROOT_DIR/cache/remote_deepseek_v31_feature_cache.sqlite3}"
-LOCAL_IP="$(python3 -c \"import socket; s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM); s.connect(('8.8.8.8', 80)); print(s.getsockname()[0]); s.close()\")"
+LOCAL_IP="$(python3 - <<'PY'
+import socket
+s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+try:
+    s.connect(("8.8.8.8", 80))
+    print(s.getsockname()[0])
+finally:
+    s.close()
+PY
+)"
 MOONCAKE_MASTER_ADDRESS="${MOONCAKE_MASTER_ADDRESS:-$LOCAL_IP:50051}"
 MOONCAKE_METADATA_SERVER="${MOONCAKE_METADATA_SERVER:-$LOCAL_IP}"
 MOONCAKE_METADATA_PORT="${MOONCAKE_METADATA_PORT:-50052}"
