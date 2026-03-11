@@ -67,5 +67,6 @@ python -m sglang.launch_server \
   --tp-size "$TP_SIZE" \
   --mem-fraction-static "$MEM_FRACTION_STATIC" \
   --trust-remote-code \
+  --enable-return-hidden-states \
   --disable-overlap-schedule \
   ${EXTRA_ARGS}
