@@ -34,7 +34,7 @@ from ray.util.scheduling_strategies import NodeAffinitySchedulingStrategy
 
 from torchspec.config.train_config import config_to_flat_args, load_config
 from torchspec.config.utils import generate_draft_model_config
-from torchspec.utils.env import get_torchspec_env_vars
+from torchspec.utils.env import get_torchspec_runtime_env
 from torchspec.utils.logging import init_tracking, logger
 
 _Phase = namedtuple("_Phase", ["name", "duration", "is_async", "blocked"])
@@ -216,7 +216,7 @@ def train_async_no_generation(args):
     with timer.phase("Create controller"):
         driver_node_id = ray.get_runtime_context().get_node_id()
         controller = AsyncTrainingController.options(
-            runtime_env={"env_vars": get_torchspec_env_vars()},
+            runtime_env=get_torchspec_runtime_env(),
             scheduling_strategy=NodeAffinitySchedulingStrategy(node_id=driver_node_id, soft=False),
         ).remote(args, args.dp_size)
 

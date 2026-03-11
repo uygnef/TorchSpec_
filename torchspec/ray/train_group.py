@@ -26,7 +26,7 @@ import ray
 from ray.util.placement_group import PlacementGroup
 from ray.util.scheduling_strategies import PlacementGroupSchedulingStrategy
 
-from torchspec.utils.env import get_torchspec_env_vars
+from torchspec.utils.env import get_torchspec_env_vars, get_torchspec_runtime_env
 
 
 class RayTrainGroup:
@@ -90,9 +90,8 @@ class RayTrainGroup:
         if "TORCHINDUCTOR_CACHE_DIR" in os.environ:
             env_vars["TORCHINDUCTOR_CACHE_DIR"] = os.environ["TORCHINDUCTOR_CACHE_DIR"]
 
-        TrainRayActor = ray.remote(num_gpus=1, runtime_env={"env_vars": env_vars})(
-            self._training_class
-        )
+        runtime_env = get_torchspec_runtime_env(env_vars)
+        TrainRayActor = ray.remote(num_gpus=1, runtime_env=runtime_env)(self._training_class)
 
         # Create worker actors
         self._actor_handlers = []

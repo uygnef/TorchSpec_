@@ -33,7 +33,7 @@ from urllib.parse import urlparse
 import ray
 
 from torchspec.ray.ray_actor import RayActor
-from torchspec.utils.env import get_torchspec_env_vars
+from torchspec.utils.env import get_torchspec_runtime_env
 from torchspec.utils.logging import logger
 
 
@@ -295,9 +295,10 @@ def launch_mooncake_master(args):
         logger.warning(f"Binary not found at {mooncake_bin}, skipping launch")
         return None
 
-    RemoteActor = ray.remote(num_cpus=0, runtime_env={"env_vars": get_torchspec_env_vars()})(
-        MooncakeMaster
-    )
+    RemoteActor = ray.remote(
+        num_cpus=0,
+        runtime_env=get_torchspec_runtime_env(),
+    )(MooncakeMaster)
     actor_options = {"name": "mooncake_master"}
     if scheduling_strategy is not None:
         actor_options["scheduling_strategy"] = scheduling_strategy

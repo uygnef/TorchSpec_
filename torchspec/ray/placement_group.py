@@ -27,6 +27,7 @@ from ray.util.placement_group import placement_group
 from ray.util.scheduling_strategies import PlacementGroupSchedulingStrategy
 
 from torchspec.ray.train_group import RayTrainGroup
+from torchspec.utils.env import get_torchspec_env_vars
 from torchspec.utils.logging import logger
 
 
@@ -102,11 +103,14 @@ def _ensure_ray_initialized():
 
     ray_address = os.environ.get("RAY_ADDRESS", "auto")
     try:
+        os.environ.pop("TORCHSPEC_RAY_SKIP_RUNTIME_ENV", None)
         ray.init(address=ray_address, ignore_reinit_error=True)
         logger.info(f"Connected to Ray cluster at {ray_address}")
     except ConnectionError:
         logger.warning("No existing Ray cluster found, starting a local instance")
-        ray.init(ignore_reinit_error=True)
+        os.environ.update(get_torchspec_env_vars())
+        os.environ["TORCHSPEC_RAY_SKIP_RUNTIME_ENV"] = "1"
+        ray.init(ignore_reinit_error=True, include_dashboard=False)
 
 
 def _get_expected_gpu_count(args) -> int:

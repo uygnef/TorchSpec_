@@ -24,7 +24,7 @@ import math
 
 import ray
 
-from torchspec.utils.env import get_torchspec_env_vars
+from torchspec.utils.env import get_torchspec_runtime_env
 from torchspec.utils.logging import logger
 
 
@@ -62,7 +62,7 @@ def setup_async_training_with_engines(
 
         driver_node_id = ray.get_runtime_context().get_node_id()
         controller = AsyncTrainingController.options(
-            runtime_env={"env_vars": get_torchspec_env_vars()},
+            runtime_env=get_torchspec_runtime_env(),
             scheduling_strategy=NodeAffinitySchedulingStrategy(node_id=driver_node_id, soft=False),
         ).remote(args, dp_size)
 
