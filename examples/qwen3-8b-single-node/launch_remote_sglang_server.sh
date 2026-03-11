@@ -68,5 +68,6 @@ python -m sglang.launch_server \
   --mem-fraction-static "$MEM_FRACTION_STATIC" \
   --trust-remote-code \
   --enable-return-hidden-states \
+  --enable-spec-training-mooncake \
   --disable-overlap-schedule \
   ${EXTRA_ARGS}
