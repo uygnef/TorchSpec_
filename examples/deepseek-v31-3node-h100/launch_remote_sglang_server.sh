@@ -11,6 +11,7 @@
 #   TP_SIZE               - Tensor parallel size
 #   PORT                  - Service port
 #   HOST                  - Bind address
+#   ADVERTISE_HOST        - Reachable host/IP shown to training machines
 #   MEM_FRACTION_STATIC   - SGLang memory fraction
 #   SGLANG_PYTHON_DIR     - sglang python package root
 #   EXTRA_ARGS            - Extra CLI args appended as a raw string
@@ -43,6 +44,17 @@ MODEL_PATH="${MODEL_PATH:-/nfs/ofs-llm-ssd/models/opensource/DeepSeek-V3.1}"
 TP_SIZE="${TP_SIZE:-8}"
 PORT="${PORT:-30000}"
 HOST="${HOST:-0.0.0.0}"
+LOCAL_IP="$(python - <<'PY'
+import socket
+s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+try:
+    s.connect(("8.8.8.8", 80))
+    print(s.getsockname()[0])
+finally:
+    s.close()
+PY
+)"
+ADVERTISE_HOST="${ADVERTISE_HOST:-$LOCAL_IP}"
 MEM_FRACTION_STATIC="${MEM_FRACTION_STATIC:-0.7}"
 SGLANG_PYTHON_DIR="${SGLANG_PYTHON_DIR:-/nfs/ofs-llab-volume/users/fengyu/torchspec/_sglang/python}"
 EXTRA_ARGS="${EXTRA_ARGS:-}"
@@ -51,7 +63,8 @@ echo "=============================================="
 echo "DeepSeek-V3.1 Remote SGLang Server"
 echo "=============================================="
 echo "Model path:          $MODEL_PATH"
-echo "Host:Port:           $HOST:$PORT"
+echo "Bind address:        $HOST:$PORT"
+echo "Reachable endpoint:  http://$ADVERTISE_HOST:$PORT"
 echo "TP size:             $TP_SIZE"
 echo "Mem fraction:        $MEM_FRACTION_STATIC"
 echo "SGLang python dir:   $SGLANG_PYTHON_DIR"

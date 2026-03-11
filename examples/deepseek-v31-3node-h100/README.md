@@ -30,6 +30,8 @@ On the inference/service machine:
 bash examples/deepseek-v31-3node-h100/launch_remote_sglang_server.sh
 ```
 
+The script prints a `Reachable endpoint` line. Use that value for `REMOTE_SGLANG_ENDPOINT`.
+
 ### 2. Start the Ray cluster
 
 On the head node:
