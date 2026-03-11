@@ -309,6 +309,7 @@ def config_to_flat_args(config: DictConfig) -> argparse.Namespace:
     # --- Computed / alias fields ---
     flat["world_size"] = flat["training_num_nodes"] * flat["training_num_gpus_per_node"]
     flat["rank"] = 0
+    flat["inference_mode"] = flat.get("mode", "local")
     flat["dynamic_loss_mask"] = flat["defer_tokenization"] and not flat["train_with_decode"]
     flat["use_wandb"] = flat.get("use_wandb", False) or flat.get("report_to") == "wandb"
     flat["use_tensorboard"] = (
