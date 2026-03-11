@@ -32,7 +32,6 @@ import ray
 from omegaconf import OmegaConf
 from ray.util.scheduling_strategies import NodeAffinitySchedulingStrategy
 
-from torchspec import AutoDraftModelConfig
 from torchspec.config.train_config import config_to_flat_args, load_config
 from torchspec.config.utils import generate_draft_model_config
 from torchspec.controller import (
@@ -42,6 +41,7 @@ from torchspec.controller import (
     run_training_loop,
     setup_async_training_with_engines,
 )
+from torchspec.models.draft.auto import AutoDraftModelConfig
 from torchspec.inference import prepare_inference_engines
 from torchspec.ray.placement_group import (
     allocate_train_group,

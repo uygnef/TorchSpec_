@@ -20,11 +20,19 @@
 
 """TorchSpec - Torch native spec decode training framework."""
 
-from torchspec.models import Eagle3Model
-from torchspec.models.draft import AutoDraftModelConfig, AutoEagle3DraftModel
+__all__ = ["Eagle3Model", "AutoDraftModelConfig", "AutoEagle3DraftModel"]
 
-__all__ = [
-    "Eagle3Model",
-    "AutoDraftModelConfig",
-    "AutoEagle3DraftModel",
-]
+
+def __getattr__(name: str):
+    if name == "Eagle3Model":
+        from torchspec.models import Eagle3Model
+
+        return Eagle3Model
+    if name in {"AutoDraftModelConfig", "AutoEagle3DraftModel"}:
+        from torchspec.models.draft import AutoDraftModelConfig, AutoEagle3DraftModel
+
+        return {
+            "AutoDraftModelConfig": AutoDraftModelConfig,
+            "AutoEagle3DraftModel": AutoEagle3DraftModel,
+        }[name]
+    raise AttributeError(f"module 'torchspec' has no attribute {name!r}")
