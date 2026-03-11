@@ -157,6 +157,9 @@ def setup_eval(controller, train_group, args, eval_dataset_size: int) -> EvalSet
     """Prepare eval runtime settings and optionally load/submit eval cache input."""
     eval_interval = args.eval_interval
     eval_enabled = eval_dataset_size > 0
+    if eval_enabled and getattr(args, "inference_mode", "local") == "remote_sglang":
+        logger.warning("Eval is not yet supported in remote_sglang mode; disabling eval")
+        eval_enabled = False
     eval_cache_path: str | None = None
     eval_cache_loaded = False
 

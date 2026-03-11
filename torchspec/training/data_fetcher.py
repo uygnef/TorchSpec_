@@ -32,6 +32,7 @@ import torch
 from ray.util.queue import Queue as RayQueue
 from torch.utils.data import DataLoader, IterableDataset
 
+from torchspec.cache.feature_cache import FeatureCache
 from torchspec.utils.logging import logger
 
 
@@ -41,6 +42,16 @@ class TrainSample:
     tensor_shapes: Dict[str, Tuple[int, ...]]
     tensor_dtypes: Optional[Dict[str, torch.dtype]] = None
     packed_loss_mask: Optional[str] = None
+
+
+def _add_batch_dim(data: Dict[str, Any]) -> Dict[str, Any]:
+    for key, tensor in data.items():
+        if tensor is not None and isinstance(tensor, torch.Tensor):
+            if tensor.dim() == 1:
+                data[key] = tensor.unsqueeze(0)
+            elif tensor.dim() == 2 and key in ["hidden_states", "last_hidden_states", "target"]:
+                data[key] = tensor.unsqueeze(0)
+    return data
 
 
 class MooncakeDataset(IterableDataset):
@@ -144,21 +155,7 @@ class MooncakeDataset(IterableDataset):
             logger.debug(f"__iter__: got item, mooncake_key={item.mooncake_key}")
             data = self._load_from_mooncake(item)
             # Note: target is computed in the collator from last_hidden_states for sglang mode
-
-            # Add batch dimension if missing (sglang stores without batch dim)
-            for key, tensor in data.items():
-                if tensor is not None and isinstance(tensor, torch.Tensor):
-                    # Check if tensor is missing batch dimension
-                    # 1D tensors (loss_mask, input_ids) should be 2D: (1, seq_len)
-                    # 2D tensors (hidden_states, last_hidden_states) should be 3D: (1, seq_len, dim)
-                    if tensor.dim() == 1:
-                        data[key] = tensor.unsqueeze(0)  # (seq_len,) -> (1, seq_len)
-                    elif tensor.dim() == 2 and key in [
-                        "hidden_states",
-                        "last_hidden_states",
-                        "target",
-                    ]:
-                        data[key] = tensor.unsqueeze(0)  # (seq_len, dim) -> (1, seq_len, dim)
+            data = _add_batch_dim(data)
 
             # Debug: log all tensor shapes after adding batch dim
             if data:
@@ -169,6 +166,36 @@ class MooncakeDataset(IterableDataset):
             yield_count += 1
             logger.debug(f"__iter__: yielding batch {yield_count}, keys={list(data.keys())}")
             yield data
+
+
+class RemoteFeatureDataset(IterableDataset):
+    """IterableDataset that resolves feature handles via remote SGLang on demand."""
+
+    def __init__(
+        self,
+        ray_queue: RayQueue,
+        feature_cache: FeatureCache,
+        device: torch.device,
+        timeout: Optional[float] = None,
+    ):
+        self.ray_queue = ray_queue
+        self.feature_cache = feature_cache
+        self.device = device
+        self.timeout = timeout
+
+    def __iter__(self) -> Iterator[Dict[str, torch.Tensor]]:
+        while True:
+            try:
+                item = self.ray_queue.get(block=True, timeout=self.timeout)
+            except Exception as e:
+                logger.warning("RemoteFeatureDataset: queue wait failed: %s", e)
+                break
+
+            if item is None:
+                break
+
+            data = self.feature_cache.resolve_and_load(item, device=self.device)
+            yield _add_batch_dim(data)
 
 
 def create_mooncake_dataloader(
@@ -220,6 +247,28 @@ def create_mooncake_dataloader(
     )
 
 
+def create_remote_feature_dataloader(
+    ray_queue: RayQueue,
+    feature_cache: FeatureCache,
+    collator: Callable[[List[Dict]], Dict[str, torch.Tensor]],
+    device: torch.device,
+    batch_size: int = 1,
+    timeout: Optional[float] = None,
+) -> DataLoader:
+    dataset = RemoteFeatureDataset(
+        ray_queue=ray_queue,
+        feature_cache=feature_cache,
+        device=device,
+        timeout=timeout,
+    )
+    return DataLoader(
+        dataset,
+        batch_size=batch_size,
+        collate_fn=collator,
+        num_workers=0,
+    )
+
+
 class MooncakeDataFetcher:
     """Queue-based data fetcher for mooncake with DataLoader backend.
 
@@ -257,6 +306,32 @@ class MooncakeDataFetcher:
             prefetch_factor=prefetch_factor,
             timeout=timeout,
             delete_after_read=delete_after_read,
+        )
+
+    def __iter__(self) -> Iterator[Dict[str, torch.Tensor]]:
+        return iter(self._dataloader)
+
+
+class RemoteFeatureDataFetcher:
+    """Queue-based data fetcher for remote SGLang feature resolution."""
+
+    def __init__(
+        self,
+        queue: RayQueue,
+        feature_cache: FeatureCache,
+        collator: Callable[[List[Dict]], Dict[str, torch.Tensor]],
+        device: torch.device,
+        batch_size: int = 1,
+        timeout: Optional[float] = None,
+    ):
+        self.batch_size = batch_size
+        self._dataloader = create_remote_feature_dataloader(
+            ray_queue=queue,
+            feature_cache=feature_cache,
+            collator=collator,
+            device=device,
+            batch_size=batch_size,
+            timeout=timeout,
         )
 
     def __iter__(self) -> Iterator[Dict[str, torch.Tensor]]:

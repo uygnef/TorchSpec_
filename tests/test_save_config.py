@@ -136,6 +136,21 @@ def test_save_config_overwrites_existing(tmp_path):
     assert reloaded.training.micro_batch_size == 8
 
 
+def test_remote_sglang_config_flattens():
+    config = OmegaConf.structured(Config)
+    config.inference.mode = "remote_sglang"
+    config.inference.remote_sglang.endpoint = "http://127.0.0.1:8000"
+    config.feature_cache.enabled = True
+
+    from torchspec.config.train_config import config_to_flat_args
+
+    args = config_to_flat_args(config)
+
+    assert args.inference_mode == "remote_sglang"
+    assert args.remote_sglang_endpoint == "http://127.0.0.1:8000"
+    assert args.feature_cache_enabled is True
+
+
 # ---------------------------------------------------------------------------
 # Integration tests for parse_config()
 # ---------------------------------------------------------------------------

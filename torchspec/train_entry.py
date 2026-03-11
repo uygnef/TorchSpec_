@@ -202,6 +202,11 @@ def train_async_no_generation(args):
         and getattr(args, "inference_engine_type", "sgl") != "sgl"
     ):
         raise ValueError("train_with_decode=True requires inference_engine_type=sgl")
+    if getattr(args, "inference_mode", "local") == "remote_sglang":
+        if getattr(args, "defer_tokenization", False):
+            raise ValueError("remote_sglang mode currently requires defer_tokenization=False")
+        if not getattr(args, "remote_sglang_endpoint", None):
+            raise ValueError("remote_sglang.endpoint must be set when inference.mode=remote_sglang")
 
     init_tracking(args)
     timer = _InitTimer()
@@ -276,9 +281,12 @@ def train_async_no_generation(args):
         # dispatched after to maximize parallelism with the wait below.
         _maybe_create_scratch_draft(args, train_group)
 
-        inference_engines, engine_init_refs = prepare_inference_engines(
-            args, pgs["inference"], mooncake_config
-        )
+        if getattr(args, "inference_mode", "local") == "remote_sglang":
+            inference_engines, engine_init_refs = [], []
+        else:
+            inference_engines, engine_init_refs = prepare_inference_engines(
+                args, pgs["inference"], mooncake_config
+            )
 
     # [8] Wait for all actor init to complete concurrently
     n_train = len(train_init_refs)

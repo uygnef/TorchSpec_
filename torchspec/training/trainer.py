@@ -36,10 +36,12 @@ from torch.distributed.checkpoint.state_dict import (
 )
 from torch.distributed.device_mesh import init_device_mesh
 
+from torchspec.cache import CacheManifest, FeatureCache
 from torchspec.config.mooncake_config import MooncakeConfig
+from torchspec.inference.client import RemoteSGLangClient
 from torchspec.data.utils import DataCollatorWithPadding
 from torchspec.training import checkpoint
-from torchspec.training.data_fetcher import MooncakeDataFetcher
+from torchspec.training.data_fetcher import MooncakeDataFetcher, RemoteFeatureDataFetcher
 from torchspec.training.fsdp import init_empty_weights
 from torchspec.training.optimizer import BF16Optimizer
 from torchspec.transfer.mooncake.eagle_store import EagleMooncakeStore
@@ -70,9 +72,10 @@ class Trainer(abc.ABC):
         self.draft_model = None
         self.optimizer: Optional[BF16Optimizer] = None
         self.lr_scheduler = None
-        self.data_fetcher: Optional[MooncakeDataFetcher] = None
+        self.data_fetcher: Optional[MooncakeDataFetcher | RemoteFeatureDataFetcher] = None
         self.train_queue = None
         self.mooncake_store: Optional[EagleMooncakeStore] = None
+        self.feature_cache: Optional[FeatureCache] = None
         self._eval_cache: list[dict] = []
 
         self.prof = TrainProfiler(args)
@@ -161,15 +164,25 @@ class Trainer(abc.ABC):
             dynamic_loss_mask=self.dynamic_loss_mask,
         )
 
-        self.data_fetcher = MooncakeDataFetcher(
-            queue=self.train_queue,
-            mooncake_store=self.mooncake_store,
-            collator=collator,
-            device=torch.cuda.current_device(),
-            batch_size=per_dp_rank_batch_size,
-            delete_after_read=not getattr(self.args, "feature_cache_enabled", False)
-            or getattr(self.args, "feature_cache_delete_after_read", True),
-        )
+        if getattr(self.args, "inference_mode", "local") == "remote_sglang":
+            self.feature_cache = self._build_feature_cache()
+            self.data_fetcher = RemoteFeatureDataFetcher(
+                queue=self.train_queue,
+                feature_cache=self.feature_cache,
+                collator=collator,
+                device=torch.cuda.current_device(),
+                batch_size=per_dp_rank_batch_size,
+            )
+        else:
+            self.data_fetcher = MooncakeDataFetcher(
+                queue=self.train_queue,
+                mooncake_store=self.mooncake_store,
+                collator=collator,
+                device=torch.cuda.current_device(),
+                batch_size=per_dp_rank_batch_size,
+                delete_after_read=not getattr(self.args, "feature_cache_enabled", False)
+                or getattr(self.args, "feature_cache_delete_after_read", True),
+            )
 
         logger.info(
             f"[Rank {self.dp_rank}] Data fetcher initialized with batch_size={per_dp_rank_batch_size}"
@@ -194,20 +207,48 @@ class Trainer(abc.ABC):
             dynamic_loss_mask=self.dynamic_loss_mask,
         )
 
-        self._eval_data_fetcher = MooncakeDataFetcher(
-            queue=queue,
-            mooncake_store=self.mooncake_store,
-            collator=collator,
-            device=torch.cuda.current_device(),
-            batch_size=per_dp_rank_batch_size,
-            delete_after_read=not getattr(self.args, "feature_cache_enabled", False)
-            or getattr(self.args, "feature_cache_delete_after_read", True),
-        )
+        if getattr(self.args, "inference_mode", "local") == "remote_sglang":
+            self.feature_cache = self.feature_cache or self._build_feature_cache()
+            self._eval_data_fetcher = RemoteFeatureDataFetcher(
+                queue=queue,
+                feature_cache=self.feature_cache,
+                collator=collator,
+                device=torch.cuda.current_device(),
+                batch_size=per_dp_rank_batch_size,
+            )
+        else:
+            self._eval_data_fetcher = MooncakeDataFetcher(
+                queue=queue,
+                mooncake_store=self.mooncake_store,
+                collator=collator,
+                device=torch.cuda.current_device(),
+                batch_size=per_dp_rank_batch_size,
+                delete_after_read=not getattr(self.args, "feature_cache_enabled", False)
+                or getattr(self.args, "feature_cache_delete_after_read", True),
+            )
         self._eval_collator = collator
         self._eval_cache: list[dict] = []
         logger.info(
             f"[Rank {self.dp_rank}] Eval data fetcher initialized "
             f"with batch_size={per_dp_rank_batch_size}"
+        )
+
+    def _build_feature_cache(self) -> FeatureCache:
+        endpoint = getattr(self.args, "remote_sglang_endpoint", None)
+        manifest = CacheManifest(getattr(self.args, "feature_cache_index_path"))
+        client = RemoteSGLangClient(
+            endpoint=endpoint,
+            timeout_seconds=getattr(self.args, "remote_sglang_timeout_seconds", 30.0),
+            max_retries=getattr(self.args, "remote_sglang_max_retries", 2),
+        )
+        return FeatureCache(
+            manifest=manifest,
+            remote_client=client,
+            mooncake_store=self.mooncake_store,
+            feature_schema_version=getattr(
+                self.args, "remote_sglang_feature_schema_version", "eagle3.v1"
+            ),
+            validate_missing_as_stale=getattr(self.args, "feature_cache_stale_on_missing", True),
         )
 
     def cache_eval_samples(self, count: int) -> int:

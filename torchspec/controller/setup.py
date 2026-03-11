@@ -66,6 +66,16 @@ def setup_async_training_with_engines(
             scheduling_strategy=NodeAffinitySchedulingStrategy(node_id=driver_node_id, soft=False),
         ).remote(args, dp_size)
 
+    if getattr(args, "inference_mode", "local") == "remote_sglang":
+        train_queues = ray.get(controller.get_train_queues.remote())
+        train_group.set_train_queues(
+            train_queues, mooncake_config, per_dp_rank_batch_size=args.per_dp_rank_batch_size
+        )
+
+        eval_queues = ray.get(controller.get_eval_queues.remote())
+        train_group.set_eval_queues(eval_queues, mooncake_config, per_dp_rank_batch_size=1)
+        return controller, None
+
     max_concurrent = getattr(args, "max_concurrent_batches", 1)
     inference_manager = AsyncInferenceManager.remote(
         args,

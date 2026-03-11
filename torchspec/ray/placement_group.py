@@ -111,6 +111,8 @@ def _ensure_ray_initialized():
 
 def _get_expected_gpu_count(args) -> int:
     training_gpus = args.training_num_nodes * args.training_num_gpus_per_node
+    if getattr(args, "inference_mode", "local") == "remote_sglang":
+        return training_gpus
     inference_gpus = getattr(args, "inference_num_gpus", 0)
     if (
         getattr(args, "colocate", False)
@@ -183,6 +185,20 @@ def create_placement_groups(args):
         return {
             "training": (pg, bundle_indices, gpu_ids),
             "inference": (pg, bundle_indices, gpu_ids),
+        }
+
+    if getattr(args, "inference_mode", "local") == "remote_sglang":
+        num_training_gpus = args.training_num_nodes * args.training_num_gpus_per_node
+        logger.info(
+            "Remote SGLang mode: creating training placement group only with %s GPUs...",
+            num_training_gpus,
+        )
+        training_pg, training_bundle_indices, training_gpu_ids = _create_placement_group(
+            num_training_gpus, strategy="PACK", name="training_pg"
+        )
+        return {
+            "training": (training_pg, training_bundle_indices, training_gpu_ids),
+            "inference": (training_pg, [], []),
         }
 
     num_training_gpus = args.training_num_nodes * args.training_num_gpus_per_node

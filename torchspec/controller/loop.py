@@ -269,8 +269,9 @@ def training_loop(
                 metrics["inference/step"] = completed_steps
 
                 # Add inference metrics (e2e_latency, spec metrics, etc.)
-                inference_metrics = ray.get(inference_manager.flush_metrics.remote())
-                metrics.update(inference_metrics)
+                if inference_manager is not None:
+                    inference_metrics = ray.get(inference_manager.flush_metrics.remote())
+                    metrics.update(inference_metrics)
 
                 if enable_perf:
                     metrics["perf/dispatch_wait"] = dispatch_wait
@@ -382,7 +383,9 @@ def run_training_loop(
     dataset_size=None,
     eval_dataset_size=None,
 ):
-    inference_future = inference_manager.run.remote()
+    inference_future = None
+    if inference_manager is not None:
+        inference_future = inference_manager.run.remote()
     try:
         return training_loop(
             args,

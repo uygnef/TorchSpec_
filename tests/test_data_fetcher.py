@@ -9,6 +9,8 @@ import torch
 from torchspec.training.data_fetcher import (
     MooncakeDataFetcher,
     MooncakeDataset,
+    RemoteFeatureDataFetcher,
+    RemoteFeatureDataset,
     TrainSample,
     create_mooncake_dataloader,
 )
@@ -95,10 +97,31 @@ class MockMooncakeStore:
         self._data.pop(key, None)
 
 
+class MockFeatureCache:
+    def __init__(self):
+        self.calls = 0
+
+    def resolve_and_load(self, sample, *, device):
+        self.calls += 1
+        seq_len = len(sample["input_ids"])
+        return {
+            "input_ids": torch.tensor(sample["input_ids"], dtype=torch.long, device=device),
+            "hidden_states": torch.zeros((seq_len, 4), dtype=torch.float32, device=device),
+            "packed_loss_mask": sample["packed_loss_mask"],
+        }
+
+
 def simple_collator(samples: List[Dict]) -> Dict[str, torch.Tensor]:
     """Stack samples into batched tensors."""
     keys = samples[0].keys()
-    return {k: torch.stack([s[k] for s in samples]) for k in keys}
+    result = {}
+    for key in keys:
+        values = [sample[key] for sample in samples]
+        if isinstance(values[0], torch.Tensor):
+            result[key] = torch.stack(values)
+        else:
+            result[key] = values
+    return result
 
 
 def make_sample(idx: int) -> TrainSample:
@@ -286,6 +309,45 @@ class TestMooncakeDataFetcher:
         batches = list(fetcher)
         assert len(batches) == 1
         assert fetcher.batch_size == 4
+
+
+class TestRemoteFeatureDataset:
+    def test_iterates_remote_samples(self):
+        ray_queue = MockRayQueue()
+        feature_cache = MockFeatureCache()
+        device = torch.device("cpu")
+
+        ray_queue.put({"sample_key": "s1", "input_ids": [1, 2, 3], "packed_loss_mask": "mask"})
+        ray_queue.put(None)
+
+        dataset = RemoteFeatureDataset(ray_queue, feature_cache, device)
+        samples = list(dataset)
+
+        assert len(samples) == 1
+        assert feature_cache.calls == 1
+        assert samples[0]["input_ids"].shape == (1, 3)
+        assert samples[0]["hidden_states"].shape == (1, 3, 4)
+
+    def test_fetcher_batches_remote_samples(self):
+        ray_queue = MockRayQueue()
+        feature_cache = MockFeatureCache()
+        device = torch.device("cpu")
+
+        ray_queue.put({"sample_key": "s1", "input_ids": [1, 2], "packed_loss_mask": "m1"})
+        ray_queue.put({"sample_key": "s2", "input_ids": [3, 4], "packed_loss_mask": "m2"})
+        ray_queue.put(None)
+
+        fetcher = RemoteFeatureDataFetcher(
+            queue=ray_queue,
+            feature_cache=feature_cache,
+            collator=simple_collator,
+            device=device,
+            batch_size=2,
+        )
+
+        batches = list(fetcher)
+        assert len(batches) == 1
+        assert batches[0]["input_ids"].shape == (2, 1, 2)
 
 
 class TestSynchronousFetching:
