@@ -64,12 +64,18 @@ def _subprocess_preexec():
 
 
 def _normalize_ray_node_ip(host: str) -> str:
-    """Resolve loopback addresses to the current Ray node IP for node affinity."""
+    """Resolve a Mooncake host string to a concrete Ray node IP for node affinity."""
     if host in {"localhost", "127.0.0.1", "::1"}:
         resolved = RayActor.get_node_ip()
         logger.info("Resolved loopback mooncake host %s to Ray node IP %s", host, resolved)
         return resolved
-    return host
+    try:
+        resolved = socket.gethostbyname(host)
+    except OSError:
+        return host
+    if resolved != host:
+        logger.info("Resolved mooncake host %s to Ray node IP %s", host, resolved)
+    return resolved
 
 
 class MooncakeMaster(RayActor):
