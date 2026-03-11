@@ -160,6 +160,33 @@ def test_request_features_missing_store_keys():
             )
 
 
+def test_request_features_rejects_cached_prompt_tokens():
+    client = RemoteSGLangClient(
+        "http://127.0.0.1:8000",
+        timeout_seconds=1.0,
+        max_retries=0,
+        hidden_size=4,
+        num_aux_hidden_layers=2,
+    )
+    payload = {
+        "meta_info": {
+            "prompt_tokens": 2,
+            "cached_tokens": 1,
+            "spec_training_mooncake_store_keys": ["feature:dataset:1"],
+        }
+    }
+
+    with patch("urllib.request.urlopen", return_value=_MockHTTPResponse(payload)):
+        with pytest.raises(RemoteSGLangError, match="disable-radix-cache"):
+            client.request_features(
+                sample_key="dataset:1",
+                input_ids=[1, 2],
+                packed_loss_mask="mask",
+                multimodal_inputs=None,
+                feature_schema_version="eagle3.v1",
+            )
+
+
 def test_normalize_dtype_object_to_string():
     client = RemoteSGLangClient(
         "http://127.0.0.1:8000",

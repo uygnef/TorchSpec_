@@ -105,6 +105,13 @@ class RemoteSGLangClient:
             store_keys = meta_info["spec_training_mooncake_store_keys"]
             if not store_keys:
                 raise RemoteSGLangError("Spec training response missing mooncake store keys")
+            cached_tokens = int(meta_info.get("cached_tokens", 0) or 0)
+            if cached_tokens > 0:
+                raise RemoteSGLangError(
+                    "Remote SGLang returned cached prompt tokens for spec training "
+                    f"(cached_tokens={cached_tokens}). Launch the server with "
+                    "--disable-radix-cache so Mooncake stores full-sequence hidden states."
+                )
             seq_len = int(meta_info.get("prompt_tokens", len(input_ids)))
             return FeatureHandle(
                 sample_key=sample_key,
