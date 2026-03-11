@@ -177,8 +177,11 @@ def test_feature_cache_stitches_cached_prefix_and_suffix(tmp_path):
 
 def test_feature_cache_fetches_missing_prefix_on_demand(tmp_path):
     manifest = CacheManifest(str(tmp_path / "manifest.sqlite3"))
+    prefix_key = FeatureCache.build_sample_key_from_values(
+        input_ids=[1, 2], packed_loss_mask="11", multimodal_inputs=None
+    )
     prefix_handle = FeatureHandle(
-        sample_key="prefix",
+        sample_key=prefix_key,
         mooncake_key="feature:prefix",
         tensor_shapes={
             "hidden_states": (2, 4),
@@ -208,7 +211,7 @@ def test_feature_cache_fetches_missing_prefix_on_demand(tmp_path):
         },
         feature_schema_version="eagle3.v1",
         created_at=2.0,
-        prefix_sample_key="prefix",
+        prefix_sample_key=prefix_key,
         cached_tokens=2,
     )
     manifest.upsert(composite_handle)
@@ -222,7 +225,7 @@ def test_feature_cache_fetches_missing_prefix_on_demand(tmp_path):
 
         def request_features(self, **kwargs):
             self.calls.append(kwargs["sample_key"])
-            if kwargs["sample_key"] == "prefix":
+            if kwargs["sample_key"] == prefix_key:
                 return prefix_handle
             return composite_handle
 
@@ -234,6 +237,6 @@ def test_feature_cache_fetches_missing_prefix_on_demand(tmp_path):
         device=torch.device("cpu"),
     )
 
-    assert remote_client.calls == ["prefix"]
+    assert remote_client.calls == [prefix_key]
     assert result["hidden_states"].shape == (3, 4)
-    assert manifest.get("prefix") == prefix_handle
+    assert manifest.get(prefix_key) == prefix_handle
