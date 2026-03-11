@@ -1,0 +1,86 @@
+# DeepSeek-V3.1 Eagle3 training - 3-node setup
+#
+# Node layout (24 GPUs across 3 nodes):
+#   - 2 nodes (16 GPUs) for inference via multi-node sgl.Engine with TP=16
+#   - 1 node  (8 GPUs, GPU 0-7)  for training (FSDP/DP)
+#
+# Usage:
+#   bash examples/deepseek-v31-3node-h100/run.sh
+
+model:
+  target_model_path: /nfs/ofs-llm-ssd/models/opensource/DeepSeek-V3.1
+  trust_remote_code: true
+
+dataset:
+  train_data_path: ???  # set to your dataset path (HF hub id, local dir, or jsonl)
+  chat_template: deepseek-v3
+  prompt_key: conversations
+
+training:
+  max_seq_length: 16384
+  seed: 42
+  micro_batch_size: 1
+  num_epochs: 3
+  save_interval: 5000
+  learning_rate: 5e-5
+  warmup_ratio: 0.015
+  max_grad_norm: 1
+  ttt_length: 4
+  draft_accumulation_steps: 1
+  training_num_nodes: 1
+  training_num_gpus_per_node: 8
+  attention_backend: flex_attention
+  max_concurrent_batches: 1
+  gradient_checkpointing: true
+  distributed_timeout_minutes: 30
+
+inference:
+  inference_engine_type: sgl
+  inference_num_gpus: 16
+  inference_num_gpus_per_engine: 16
+  inference_num_gpus_per_node: 8
+  max_sample_pool_size: 32
+  inference_buffer_threshold: 8
+  inference_fetch_batch: 32
+  inference_batch_size: 8
+  sglang:
+    tp_size: 16
+    nnodes: 2
+    dist_init_addr: null  # auto-negotiated via Ray; set explicitly to override
+    mem_fraction_static: 0.6
+    init_timeout: 1800
+    dist_timeout: 600
+    extra_args:
+      model_loader_extra_config:
+        enable_multithread_load: true
+        num_threads: 32
+      disable_flashinfer_autotune: true
+      watchdog_timeout: 1800
+
+mooncake:
+  master_server_address: null
+  metadata_server: null
+  protocol: tcp # Change this to RDMA for good performance.
+  hidden_dim: 7168
+  global_segment_size: 128GB
+  local_buffer_size: 16GB
+  # device_name: mlx5_0,mlx5_1 # Please change this to correct network devices.
+  # enable_gpu_direct: true
+
+output_dir: ./outputs/train_deepseek_v31_3node
+cache_dir: ./cache/train_deepseek_v31_3node
+model_download_dir: null
+
+debug:
+  save_debug_train_data: null
+  debug_train_only: false
+  debug_inference_only: false
+
+logging:
+  report_to: none
+  wandb_key: null
+  wandb_project: train_deepseek_v31
+  wandb_team: null
+  wandb_group: null
+  wandb_mode: online
+  wandb_random_suffix: true
