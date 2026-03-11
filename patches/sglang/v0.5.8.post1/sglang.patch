@@ -1,30 +1,34 @@
-torchspec sglang patch (base: 0f2df9370a)
----
- python/sglang/srt/entrypoints/engine.py            |  10 +
- python/sglang/srt/entrypoints/http_server.py       |  17 ++
- python/sglang/srt/layers/logits_processor.py       |  84 +++++++
- python/sglang/srt/managers/detokenizer_manager.py  |   3 +
- python/sglang/srt/managers/io_struct.py            |  50 ++++
- python/sglang/srt/managers/schedule_batch.py       |  61 ++++-
- python/sglang/srt/managers/scheduler.py            |  36 +++
- .../managers/scheduler_output_processor_mixin.py   | 269 +++++++++++++++++++--
- .../srt/managers/scheduler_update_weights_mixin.py |  20 +-
- python/sglang/srt/managers/tokenizer_manager.py    |  16 ++
- python/sglang/srt/managers/utils.py                |   4 +
- .../sglang/srt/model_executor/cuda_graph_runner.py |   5 +
- .../srt/model_executor/forward_batch_info.py       |   6 +
- python/sglang/srt/model_executor/model_runner.py   |  16 ++
- python/sglang/srt/models/kimi_k25.py               |  13 +
- python/sglang/srt/models/qwen3_next.py             |  65 ++++-
- python/sglang/srt/models/qwen3_next_mtp.py         |   3 +
- python/sglang/srt/server_args.py                   |  21 ++
- python/sglang/srt/speculative/eagle_info.py        |  21 ++
- python/sglang/srt/speculative/eagle_worker.py      |  70 +++++-
- .../sglang/srt/speculative/spec_training_info.py   |  56 +++++
- 21 files changed, 820 insertions(+), 26 deletions(-)
-
+diff --git a/assets/logo.png b/assets/logo.png
+old mode 100644
+new mode 100755
+diff --git a/assets/logo_square.png b/assets/logo_square.png
+old mode 100644
+new mode 100755
+diff --git a/benchmark/reasoning_benchmark/figure/Acc_histplot.png b/benchmark/reasoning_benchmark/figure/Acc_histplot.png
+old mode 100644
+new mode 100755
+diff --git a/benchmark/reasoning_benchmark/figure/SE_numtries.png b/benchmark/reasoning_benchmark/figure/SE_numtries.png
+old mode 100644
+new mode 100755
+diff --git a/docs/_static/image/logo.ico b/docs/_static/image/logo.ico
+old mode 100644
+new mode 100755
+diff --git a/docs/_static/image/logo.png b/docs/_static/image/logo.png
+old mode 100644
+new mode 100755
+diff --git a/examples/assets/example_image.png b/examples/assets/example_image.png
+old mode 100644
+new mode 100755
+diff --git a/examples/frontend_language/quick_start/images/cat.jpeg b/examples/frontend_language/quick_start/images/cat.jpeg
+old mode 100644
+new mode 100755
+diff --git a/examples/frontend_language/quick_start/images/dog.jpeg b/examples/frontend_language/quick_start/images/dog.jpeg
+old mode 100644
+new mode 100755
 diff --git a/python/sglang/srt/entrypoints/engine.py b/python/sglang/srt/entrypoints/engine.py
-index 8d7ab8716..b2e633016 100644
+old mode 100644
+new mode 100755
+index 8d7ab8716..b2e633016
 --- a/python/sglang/srt/entrypoints/engine.py
 +++ b/python/sglang/srt/entrypoints/engine.py
 @@ -233,6 +233,9 @@ class Engine(EngineBase):
@@ -66,7 +70,9 @@ index 8d7ab8716..b2e633016 100644
          generator = self.tokenizer_manager.generate_request(obj, None)
  
 diff --git a/python/sglang/srt/entrypoints/http_server.py b/python/sglang/srt/entrypoints/http_server.py
-index 0bcbd4a37..98348747b 100644
+old mode 100644
+new mode 100755
+index 0bcbd4a37..98348747b
 --- a/python/sglang/srt/entrypoints/http_server.py
 +++ b/python/sglang/srt/entrypoints/http_server.py
 @@ -656,6 +656,23 @@ async def generate_request(obj: GenerateReqInput, request: Request):
@@ -94,7 +100,9 @@ index 0bcbd4a37..98348747b 100644
  async def encode_request(obj: EmbeddingReqInput, request: Request):
      """Handle an embedding request."""
 diff --git a/python/sglang/srt/layers/logits_processor.py b/python/sglang/srt/layers/logits_processor.py
-index d0d7c9344..7fda27ef9 100644
+old mode 100644
+new mode 100755
+index d0d7c9344..7fda27ef9
 --- a/python/sglang/srt/layers/logits_processor.py
 +++ b/python/sglang/srt/layers/logits_processor.py
 @@ -104,6 +104,10 @@ class LogitsProcessorOutput:
@@ -245,7 +253,9 @@ index d0d7c9344..7fda27ef9 100644
              pruned_states = hidden_states
              pruned_states_before_norm = hidden_states_before_norm
 diff --git a/python/sglang/srt/managers/detokenizer_manager.py b/python/sglang/srt/managers/detokenizer_manager.py
-index a65b0dd28..e61c878cb 100644
+old mode 100644
+new mode 100755
+index a65b0dd28..e61c878cb
 --- a/python/sglang/srt/managers/detokenizer_manager.py
 +++ b/python/sglang/srt/managers/detokenizer_manager.py
 @@ -403,6 +403,9 @@ class DetokenizerManager(MultiHttpWorkerDetokenizerMixin):
@@ -259,10 +269,12 @@ index a65b0dd28..e61c878cb 100644
  
      def handle_multimodal_decode_req(self, recv_obj: BatchMultimodalDecodeReq):
 diff --git a/python/sglang/srt/managers/io_struct.py b/python/sglang/srt/managers/io_struct.py
-index 624812186..4f913eb0f 100644
+old mode 100644
+new mode 100755
+index 624812186..3f575ecbe
 --- a/python/sglang/srt/managers/io_struct.py
 +++ b/python/sglang/srt/managers/io_struct.py
-@@ -273,6 +273,13 @@ class GenerateReqInput(BaseReq, APIServingTimingMixin):
+@@ -273,6 +273,14 @@ class GenerateReqInput(BaseReq, APIServingTimingMixin):
      image_max_dynamic_patch: Optional[int] = None
      video_max_dynamic_patch: Optional[int] = None
  
@@ -277,7 +289,7 @@ index 624812186..4f913eb0f 100644
      def contains_mm_input(self) -> bool:
          return (
              has_valid_data(self.image_data)
-@@ -404,6 +411,7 @@ class GenerateReqInput(BaseReq, APIServingTimingMixin):
+@@ -404,6 +412,7 @@ class GenerateReqInput(BaseReq, APIServingTimingMixin):
          self._normalize_logprob_params(num)
          self._normalize_custom_logit_processor(num)
          self._normalize_bootstrap_params(num)
@@ -285,7 +297,7 @@ index 624812186..4f913eb0f 100644
  
      def _expand_inputs(self, num):
          """Expand the main inputs (text, input_ids, input_embeds) for parallel sampling."""
-@@ -606,6 +614,24 @@ class GenerateReqInput(BaseReq, APIServingTimingMixin):
+@@ -606,6 +615,31 @@ class GenerateReqInput(BaseReq, APIServingTimingMixin):
          elif isinstance(self.bootstrap_pair_key, list):
              self.bootstrap_pair_key = self.bootstrap_pair_key * self.parallel_sample_num
  
@@ -317,7 +329,7 @@ index 624812186..4f913eb0f 100644
      def _validate_session_params(self):
          """Validate that session parameters are properly formatted."""
          if self.session_params is not None:
-@@ -678,6 +704,14 @@ class GenerateReqInput(BaseReq, APIServingTimingMixin):
+@@ -678,6 +712,17 @@ class GenerateReqInput(BaseReq, APIServingTimingMixin):
              return_entropy=self.return_entropy,
              external_trace_header=self.external_trace_header,
              http_worker_ipc=self.http_worker_ipc,
@@ -335,7 +347,7 @@ index 624812186..4f913eb0f 100644
              **{
                  field: getattr(self, field)
                  for field in _API_SERVING_TIMING_MIXIN_FIELDS
-@@ -765,6 +799,10 @@ class TokenizedGenerateReqInput(BaseReq):
+@@ -765,6 +810,11 @@ class TokenizedGenerateReqInput(BaseReq):
      need_wait_for_image: bool = False
      num_items_assigned: Optional[List] = None
  
@@ -347,7 +359,7 @@ index 624812186..4f913eb0f 100644
  
  @dataclass
  class BatchTokenizedGenerateReqInput(BaseBatchReq):
-@@ -1006,6 +1044,11 @@ class BatchTokenIDOutput(
+@@ -1006,6 +1056,12 @@ class BatchTokenIDOutput(
      # Customized info
      customized_info: Optional[Dict[str, List[Any]]] = None
  
@@ -360,7 +372,7 @@ index 624812186..4f913eb0f 100644
  
  @dataclass
  class BatchMultimodalDecodeReq(BaseBatchReq):
-@@ -1095,6 +1138,11 @@ class BatchStrOutput(
+@@ -1095,6 +1151,11 @@ class BatchStrOutput(
      # Customized info
      customized_info: Optional[Dict[str, List[Any]]] = None
  
@@ -368,12 +380,11 @@ index 624812186..4f913eb0f 100644
 +    spec_training_data_ids: Optional[List[str]] = None
 +    packed_loss_masks: Optional[List[str]] = None
 +    spec_training_mooncake_store_keys: Optional[List[List[str]]] = None
-+    spec_training_tensor_shapes: Optional[List[Optional[Dict[str, List[int]]]]] = None
 +
-
-@dataclass
+ 
+ @dataclass
  class BatchMultimodalOutput(BaseBatchReq):
-@@ -1269,6 +1317,8 @@ class UpdateWeightFromDiskReqInput(BaseReq):
+@@ -1269,6 +1330,8 @@ class UpdateWeightFromDiskReqInput(BaseReq):
      token_step: int = 0
      # Whether to flush the cache after updating weights
      flush_cache: bool = True
@@ -383,7 +394,9 @@ index 624812186..4f913eb0f 100644
  
  @dataclass
 diff --git a/python/sglang/srt/managers/schedule_batch.py b/python/sglang/srt/managers/schedule_batch.py
-index 8f3441b1b..f60a43078 100644
+old mode 100644
+new mode 100755
+index 8f3441b1b..dbb427ffd
 --- a/python/sglang/srt/managers/schedule_batch.py
 +++ b/python/sglang/srt/managers/schedule_batch.py
 @@ -46,7 +46,7 @@ from enum import Enum, auto
@@ -403,7 +416,7 @@ index 8f3441b1b..f60a43078 100644
  from sglang.srt.utils import flatten_nested_list
  from sglang.srt.utils.cuda_ipc_transport_utils import CudaIpcTensorTransportProxy
  
-@@ -543,6 +544,8 @@ class Req:
+@@ -543,6 +544,9 @@ class Req:
          routing_key: Optional[str] = None,
          dimensions: Optional[int] = None,
          http_worker_ipc: Optional[str] = None,
@@ -413,7 +426,7 @@ index 8f3441b1b..f60a43078 100644
      ):
          # Input and output info
          self.rid = rid
-@@ -583,6 +586,11 @@ class Req:
+@@ -583,6 +587,13 @@ class Req:
          # For multi-http worker
          self.http_worker_ipc = http_worker_ipc
  
@@ -427,7 +440,7 @@ index 8f3441b1b..f60a43078 100644
          # Require reasoning for the request (hybrid reasoning model only)
          self.require_reasoning = require_reasoning
  
-@@ -753,6 +761,8 @@ class Req:
+@@ -753,6 +764,8 @@ class Req:
          # The number of verification forward passes in the speculative decoding.
          # This is used to compute the average acceptance length per request.
          self.spec_verify_ct = 0
@@ -436,7 +449,7 @@ index 8f3441b1b..f60a43078 100644
  
          # The number of accepted tokens in speculative decoding for this request.
          # This is used to compute the acceptance rate and average acceptance length per request.
-@@ -1364,6 +1374,9 @@ class ScheduleBatch(ScheduleBatchDisaggregationDecodeMixin):
+@@ -1364,6 +1377,9 @@ class ScheduleBatch(ScheduleBatchDisaggregationDecodeMixin):
      # Metrics
      dp_cooperation_info: Optional[DPCooperationInfo] = None
  
@@ -446,7 +459,7 @@ index 8f3441b1b..f60a43078 100644
      @classmethod
      def init_new(
          cls,
-@@ -1384,6 +1397,15 @@ class ScheduleBatch(ScheduleBatchDisaggregationDecodeMixin):
+@@ -1384,6 +1400,15 @@ class ScheduleBatch(ScheduleBatchDisaggregationDecodeMixin):
          if isinstance(token_to_kv_pool_allocator, SWATokenToKVPoolAllocator):
              is_hybrid_swa = True
  
@@ -462,7 +475,7 @@ index 8f3441b1b..f60a43078 100644
          return cls(
              reqs=reqs,
              req_to_token_pool=req_to_token_pool,
-@@ -1403,6 +1425,9 @@ class ScheduleBatch(ScheduleBatchDisaggregationDecodeMixin):
+@@ -1403,6 +1428,9 @@ class ScheduleBatch(ScheduleBatchDisaggregationDecodeMixin):
              chunked_req=chunked_req,
              dllm_staging_reqs=dllm_staging_reqs,
              dllm_config=dllm_config,
@@ -472,7 +485,7 @@ index 8f3441b1b..f60a43078 100644
          )
  
      def batch_size(self):
-@@ -2130,6 +2155,16 @@ class ScheduleBatch(ScheduleBatchDisaggregationDecodeMixin):
+@@ -2130,6 +2158,16 @@ class ScheduleBatch(ScheduleBatchDisaggregationDecodeMixin):
                  has_been_filtered=has_been_filtered,
              )
  
@@ -489,7 +502,7 @@ index 8f3441b1b..f60a43078 100644
      def merge_batch(self, other: "ScheduleBatch"):
          # NOTE: in spec v2 mode, we do not need wait verify here because
          # 1) current batch is always prefill, whose seq_lens is not a future
-@@ -2178,6 +2213,23 @@ class ScheduleBatch(ScheduleBatchDisaggregationDecodeMixin):
+@@ -2178,6 +2216,23 @@ class ScheduleBatch(ScheduleBatchDisaggregationDecodeMixin):
          if self.spec_info:
              self.spec_info.merge_batch(other.spec_info)
  
@@ -513,7 +526,7 @@ index 8f3441b1b..f60a43078 100644
      def get_model_worker_batch(
          self, seq_lens_cpu_cache: Optional[torch.Tensor] = None
      ) -> ModelWorkerBatch:
-@@ -2234,7 +2286,7 @@ class ScheduleBatch(ScheduleBatchDisaggregationDecodeMixin):
+@@ -2234,7 +2289,7 @@ class ScheduleBatch(ScheduleBatchDisaggregationDecodeMixin):
              hicache_consumer_index=self.hicache_consumer_index,
              capture_hidden_mode=(
                  CaptureHiddenMode.FULL
@@ -522,7 +535,7 @@ index 8f3441b1b..f60a43078 100644
                  else (
                      getattr(
                          self.spec_info, "capture_hidden_mode", CaptureHiddenMode.NULL
-@@ -2253,6 +2305,7 @@ class ScheduleBatch(ScheduleBatchDisaggregationDecodeMixin):
+@@ -2253,6 +2308,7 @@ class ScheduleBatch(ScheduleBatchDisaggregationDecodeMixin):
              mamba_track_indices=self.mamba_track_indices,
              mamba_track_mask=self.mamba_track_mask,
              mamba_track_seqlens=self.mamba_track_seqlens,
@@ -530,7 +543,7 @@ index 8f3441b1b..f60a43078 100644
          )
  
      def copy(self):
-@@ -2278,6 +2331,7 @@ class ScheduleBatch(ScheduleBatchDisaggregationDecodeMixin):
+@@ -2278,6 +2334,7 @@ class ScheduleBatch(ScheduleBatchDisaggregationDecodeMixin):
              mamba_track_mask=self.mamba_track_mask,
              mamba_track_seqlens=self.mamba_track_seqlens,
              dp_cooperation_info=self.dp_cooperation_info,
@@ -538,7 +551,7 @@ index 8f3441b1b..f60a43078 100644
          )
  
      def maybe_evict_swa(self):
-@@ -2431,3 +2485,6 @@ class ModelWorkerBatch:
+@@ -2431,3 +2488,6 @@ class ModelWorkerBatch:
      mamba_track_indices: Optional[torch.Tensor] = None  # shape: [b], int64
      mamba_track_mask: Optional[torch.Tensor] = None  # shape: [b], bool
      mamba_track_seqlens: Optional[torch.Tensor] = None  # shape: [b], int64
@@ -546,10 +559,12 @@ index 8f3441b1b..f60a43078 100644
 +    # For spec training
 +    has_spec_training: bool = False
 diff --git a/python/sglang/srt/managers/scheduler.py b/python/sglang/srt/managers/scheduler.py
-index e818deaa4..4dbbe539d 100644
+old mode 100644
+new mode 100755
+index e818deaa4..70e5afc98
 --- a/python/sglang/srt/managers/scheduler.py
 +++ b/python/sglang/srt/managers/scheduler.py
-@@ -394,6 +394,19 @@ class Scheduler(
+@@ -394,6 +394,13 @@ class Scheduler(
          # Init the grammar backend for constrained generation
          self.grammar_manager = GrammarManager(self)
  
@@ -563,7 +578,7 @@ index e818deaa4..4dbbe539d 100644
          self.is_initializing = False
  
      def init_model_config(self):
-@@ -727,6 +740,27 @@ class Scheduler(
+@@ -727,6 +734,60 @@ class Scheduler(
          self.forward_sleep_time = None
          self._engine_paused = False
  
@@ -624,7 +639,7 @@ index e818deaa4..4dbbe539d 100644
      def init_chunked_prefill(self):
          # Init chunked prefill
          self.chunked_prefill_size = self.server_args.chunked_prefill_size
-@@ -1468,6 +1502,8 @@ class Scheduler(
+@@ -1468,6 +1529,9 @@ class Scheduler(
                  routing_key=recv_req.routing_key,
                  http_worker_ipc=recv_req.http_worker_ipc,
                  dllm_config=self.dllm_config,
@@ -635,7 +650,7 @@ index e818deaa4..4dbbe539d 100644
              req.tokenizer = self.tokenizer
  
 diff --git a/python/sglang/srt/managers/scheduler_output_processor_mixin.py b/python/sglang/srt/managers/scheduler_output_processor_mixin.py
-index d79f929d3..0171982fe 100644
+index d79f929d3..e40a1dee3 100644
 --- a/python/sglang/srt/managers/scheduler_output_processor_mixin.py
 +++ b/python/sglang/srt/managers/scheduler_output_processor_mixin.py
 @@ -180,21 +180,27 @@ class SchedulerOutputProcessorMixin:
@@ -749,7 +764,7 @@ index d79f929d3..0171982fe 100644
                  self.maybe_collect_routed_experts(req)
  
                  if self.server_args.disaggregation_decode_enable_offload_kvcache:
-@@ -843,6 +904,156 @@ class SchedulerOutputProcessorMixin:
+@@ -843,6 +904,175 @@ class SchedulerOutputProcessorMixin:
          if req.input_token_ids_logprobs_idx is None:
              req.input_token_ids_logprobs_idx = []
  
@@ -905,7 +920,7 @@ index d79f929d3..0171982fe 100644
 +                f"Spec training request {req.rid} missing Mooncake target or store initialization failed."
 +            )
 +
-+        shapes = mooncake_store.put(
++        mooncake_store.put(
 +            key=key,
 +            hidden_states=all_hidden_states,
 +            input_ids=input_ids,
@@ -925,7 +940,7 @@ index d79f929d3..0171982fe 100644
      def stream_output(
          self: Scheduler,
          reqs: List[Req],
-@@ -901,6 +1112,10 @@ class SchedulerOutputProcessorMixin:
+@@ -901,6 +1131,11 @@ class SchedulerOutputProcessorMixin:
          routed_experts = None
          customized_info = {}
  
@@ -937,7 +952,7 @@ index d79f929d3..0171982fe 100644
          queue_times = []
          forward_entry_times = []
          prefill_launch_delays = []
-@@ -1022,6 +1237,12 @@ class SchedulerOutputProcessorMixin:
+@@ -1022,6 +1257,13 @@ class SchedulerOutputProcessorMixin:
                      spec_verify_ct.append(req.spec_verify_ct)
                      spec_accepted_tokens.append(req.spec_accepted_tokens)
  
@@ -951,7 +966,7 @@ index d79f929d3..0171982fe 100644
                  if return_logprob:
                      if (
                          req.return_logprob
-@@ -1091,9 +1312,14 @@ class SchedulerOutputProcessorMixin:
+@@ -1091,9 +1333,11 @@ class SchedulerOutputProcessorMixin:
                          output_token_ids_logprobs_idx.append([])
  
                  if req.return_hidden_states:
@@ -966,7 +981,7 @@ index d79f929d3..0171982fe 100644
                  if req.return_routed_experts:
                      if routed_experts is None:
                          routed_experts = []
-@@ -1158,6 +1384,15 @@ class SchedulerOutputProcessorMixin:
+@@ -1158,6 +1402,20 @@ class SchedulerOutputProcessorMixin:
                      placeholder_tokens_val=None,
                      retraction_counts=retraction_counts,
                      load=load,
@@ -988,7 +1003,9 @@ index d79f929d3..0171982fe 100644
              )
  
 diff --git a/python/sglang/srt/managers/scheduler_update_weights_mixin.py b/python/sglang/srt/managers/scheduler_update_weights_mixin.py
-index 293a84350..6f34eb665 100644
+old mode 100644
+new mode 100755
+index 293a84350..6f34eb665
 --- a/python/sglang/srt/managers/scheduler_update_weights_mixin.py
 +++ b/python/sglang/srt/managers/scheduler_update_weights_mixin.py
 @@ -13,6 +13,7 @@ from sglang.srt.constants import (
@@ -1026,10 +1043,12 @@ index 293a84350..6f34eb665 100644
              if recv_req.flush_cache:
                  flush_cache_success = self.flush_cache()
 diff --git a/python/sglang/srt/managers/tokenizer_manager.py b/python/sglang/srt/managers/tokenizer_manager.py
-index 69806de1d..411752d0b 100644
+old mode 100644
+new mode 100755
+index 69806de1d..8f313dd72
 --- a/python/sglang/srt/managers/tokenizer_manager.py
 +++ b/python/sglang/srt/managers/tokenizer_manager.py
-@@ -945,6 +945,8 @@ class TokenizerManager(TokenizerCommunicatorMixin, TokenizerManagerMultiItemMixi
+@@ -945,6 +945,9 @@ class TokenizerManager(TokenizerCommunicatorMixin, TokenizerManagerMultiItemMixi
                  routing_key=obj.routing_key,
                  need_wait_for_image=obj.need_wait_for_image,
                  num_items_assigned=obj.num_items_assigned,
@@ -1039,7 +1058,7 @@ index 69806de1d..411752d0b 100644
              )
          elif isinstance(obj, EmbeddingReqInput):
              tokenized_obj = TokenizedEmbeddingReqInput(
-@@ -1595,6 +1597,20 @@ class TokenizerManager(TokenizerCommunicatorMixin, TokenizerManagerMultiItemMixi
+@@ -1595,6 +1598,23 @@ class TokenizerManager(TokenizerCommunicatorMixin, TokenizerManagerMultiItemMixi
                  if self.enable_metrics:
                      self._calculate_timing_metrics(meta_info, state, recv_obj, i)
  
@@ -1079,7 +1098,9 @@ index 9eea302b7..7629381b5 100644
  
          if self.accept_lens is not None:
 diff --git a/python/sglang/srt/model_executor/cuda_graph_runner.py b/python/sglang/srt/model_executor/cuda_graph_runner.py
-index b0b2ede6d..3d15d2b67 100644
+old mode 100644
+new mode 100755
+index b0b2ede6d..3d15d2b67
 --- a/python/sglang/srt/model_executor/cuda_graph_runner.py
 +++ b/python/sglang/srt/model_executor/cuda_graph_runner.py
 @@ -878,6 +878,11 @@ class CudaGraphRunner:
@@ -1095,7 +1116,9 @@ index b0b2ede6d..3d15d2b67 100644
              )
          else:
 diff --git a/python/sglang/srt/model_executor/forward_batch_info.py b/python/sglang/srt/model_executor/forward_batch_info.py
-index bcd1fda10..8b921d214 100644
+old mode 100644
+new mode 100755
+index bcd1fda10..8b921d214
 --- a/python/sglang/srt/model_executor/forward_batch_info.py
 +++ b/python/sglang/srt/model_executor/forward_batch_info.py
 @@ -270,6 +270,8 @@ class ForwardBatch(ForwardBatchDeepSeekMHAMixin):
@@ -1126,7 +1149,9 @@ index bcd1fda10..8b921d214 100644
          device = model_runner.device
  
 diff --git a/python/sglang/srt/model_executor/model_runner.py b/python/sglang/srt/model_executor/model_runner.py
-index 01d6c8866..d0ff3eb8d 100644
+old mode 100644
+new mode 100755
+index 01d6c8866..d0ff3eb8d
 --- a/python/sglang/srt/model_executor/model_runner.py
 +++ b/python/sglang/srt/model_executor/model_runner.py
 @@ -323,6 +323,7 @@ class ModelRunner(ModelRunnerKVCacheMixin):
@@ -1174,7 +1199,9 @@ index 01d6c8866..d0ff3eb8d 100644
          # Sample the next tokens
          next_token_ids = self.sampler(
 diff --git a/python/sglang/srt/models/kimi_k25.py b/python/sglang/srt/models/kimi_k25.py
-index 048ef0578..0f8fe34e5 100644
+old mode 100644
+new mode 100755
+index 048ef0578..0f8fe34e5
 --- a/python/sglang/srt/models/kimi_k25.py
 +++ b/python/sglang/srt/models/kimi_k25.py
 @@ -740,5 +740,18 @@ class KimiK25ForConditionalGeneration(nn.Module):
@@ -1197,7 +1224,9 @@ index 048ef0578..0f8fe34e5 100644
  
  EntryClass = [KimiK25ForConditionalGeneration]
 diff --git a/python/sglang/srt/models/qwen3_next.py b/python/sglang/srt/models/qwen3_next.py
-index 9e96797c0..2d2a2cadb 100644
+old mode 100644
+new mode 100755
+index 9e96797c0..2d2a2cadb
 --- a/python/sglang/srt/models/qwen3_next.py
 +++ b/python/sglang/srt/models/qwen3_next.py
 @@ -1,6 +1,6 @@
@@ -1323,7 +1352,9 @@ index 9e96797c0..2d2a2cadb 100644
  
                  if "mtp" not in name:
 diff --git a/python/sglang/srt/models/qwen3_next_mtp.py b/python/sglang/srt/models/qwen3_next_mtp.py
-index aa0f8ec1e..2f8521c6a 100644
+old mode 100644
+new mode 100755
+index aa0f8ec1e..2f8521c6a
 --- a/python/sglang/srt/models/qwen3_next_mtp.py
 +++ b/python/sglang/srt/models/qwen3_next_mtp.py
 @@ -72,6 +72,9 @@ class Qwen3NextForCausalLMMTP(Qwen3NextForCausalLM):
@@ -1337,7 +1368,9 @@ index aa0f8ec1e..2f8521c6a 100644
      def forward(
          self,
 diff --git a/python/sglang/srt/server_args.py b/python/sglang/srt/server_args.py
-index 1c7074715..0cc83b842 100644
+old mode 100644
+new mode 100755
+index 1c7074715..0cc83b842
 --- a/python/sglang/srt/server_args.py
 +++ b/python/sglang/srt/server_args.py
 @@ -483,6 +483,10 @@ class ServerArgs:
@@ -1376,7 +1409,9 @@ index 1c7074715..0cc83b842 100644
          parser.add_argument(
              "--expert-parallel-size",
 diff --git a/python/sglang/srt/speculative/eagle_info.py b/python/sglang/srt/speculative/eagle_info.py
-index e22eeaee4..1f07955fe 100644
+old mode 100644
+new mode 100755
+index e22eeaee4..1f07955fe
 --- a/python/sglang/srt/speculative/eagle_info.py
 +++ b/python/sglang/srt/speculative/eagle_info.py
 @@ -429,6 +429,20 @@ class EagleVerifyInput(SpecInput, EagleVerifyInputV2Mixin):
@@ -1415,7 +1450,9 @@ index e22eeaee4..1f07955fe 100644
  
          pt = 0
 diff --git a/python/sglang/srt/speculative/eagle_worker.py b/python/sglang/srt/speculative/eagle_worker.py
-index 0086e2aa7..ceaf1795c 100644
+old mode 100644
+new mode 100755
+index 0086e2aa7..ceaf1795c
 --- a/python/sglang/srt/speculative/eagle_worker.py
 +++ b/python/sglang/srt/speculative/eagle_worker.py
 @@ -362,6 +362,7 @@ class EAGLEWorker(TpModelWorker):
@@ -1555,7 +1592,7 @@ index 0086e2aa7..ceaf1795c 100644
  @torch.compile(dynamic=True, disable=_is_npu)
  def get_last_loc_large_page_size_top_k_1(
 diff --git a/python/sglang/srt/speculative/spec_training_info.py b/python/sglang/srt/speculative/spec_training_info.py
-new file mode 100644
+new file mode 100755
 index 000000000..b71332bfa
 --- /dev/null
 +++ b/python/sglang/srt/speculative/spec_training_info.py
@@ -1616,3 +1653,33 @@ index 000000000..b71332bfa
 +
 +    def is_empty(self) -> bool:
 +        return len(self.data_ids) == 0
+diff --git a/sgl-model-gateway/tests/fixtures/images/grayscale.jpg b/sgl-model-gateway/tests/fixtures/images/grayscale.jpg
+old mode 100644
+new mode 100755
+diff --git a/sgl-model-gateway/tests/fixtures/images/large.jpg b/sgl-model-gateway/tests/fixtures/images/large.jpg
+old mode 100644
+new mode 100755
+diff --git a/sgl-model-gateway/tests/fixtures/images/odd_dims.jpg b/sgl-model-gateway/tests/fixtures/images/odd_dims.jpg
+old mode 100644
+new mode 100755
+diff --git a/sgl-model-gateway/tests/fixtures/images/small.jpg b/sgl-model-gateway/tests/fixtures/images/small.jpg
+old mode 100644
+new mode 100755
+diff --git a/sgl-model-gateway/tests/fixtures/images/square.jpg b/sgl-model-gateway/tests/fixtures/images/square.jpg
+old mode 100644
+new mode 100755
+diff --git a/sgl-model-gateway/tests/fixtures/images/tall.jpg b/sgl-model-gateway/tests/fixtures/images/tall.jpg
+old mode 100644
+new mode 100755
+diff --git a/sgl-model-gateway/tests/fixtures/images/tiny.jpg b/sgl-model-gateway/tests/fixtures/images/tiny.jpg
+old mode 100644
+new mode 100755
+diff --git a/sgl-model-gateway/tests/fixtures/images/very_tall.jpg b/sgl-model-gateway/tests/fixtures/images/very_tall.jpg
+old mode 100644
+new mode 100755
+diff --git a/sgl-model-gateway/tests/fixtures/images/very_wide.jpg b/sgl-model-gateway/tests/fixtures/images/very_wide.jpg
+old mode 100644
+new mode 100755
+diff --git a/sgl-model-gateway/tests/fixtures/images/wide.jpg b/sgl-model-gateway/tests/fixtures/images/wide.jpg
+old mode 100644
+new mode 100755
