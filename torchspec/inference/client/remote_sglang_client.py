@@ -82,11 +82,19 @@ class RemoteSGLangClient:
     def _parse_response(
         self,
         *,
-        body: dict[str, Any],
+        body: dict[str, Any] | list[dict[str, Any]],
         sample_key: str,
         input_ids: list[int],
         feature_schema_version: str,
     ) -> FeatureHandle:
+        if isinstance(body, list):
+            if not body:
+                raise RemoteSGLangError("Malformed feature handle response: empty response list")
+            body = body[0]
+        if not isinstance(body, dict):
+            raise RemoteSGLangError(
+                f"Malformed feature handle response: expected object, got {type(body).__name__}"
+            )
         status = body.get("status", "ok")
         if status != "ok":
             raise RemoteSGLangError(

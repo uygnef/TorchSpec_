@@ -12,7 +12,7 @@ from torchspec.inference.client.remote_sglang_client import (
 
 
 class _MockHTTPResponse:
-    def __init__(self, payload: dict):
+    def __init__(self, payload):
         self._payload = payload
 
     def read(self):
@@ -33,14 +33,16 @@ def test_request_features_success():
         hidden_size=4,
         num_aux_hidden_layers=2,
     )
-    payload = {
-        "meta_info": {
-            "spec_training_data_id": "dataset:1",
-            "packed_loss_mask": "mask",
-            "spec_training_mooncake_store_keys": ["feature:dataset:1"],
-            "prompt_tokens": 2,
+    payload = [
+        {
+            "meta_info": {
+                "spec_training_data_id": "dataset:1",
+                "packed_loss_mask": "mask",
+                "spec_training_mooncake_store_keys": ["feature:dataset:1"],
+                "prompt_tokens": 2,
+            }
         }
-    }
+    ]
 
     with patch("urllib.request.urlopen", return_value=_MockHTTPResponse(payload)) as mock_urlopen:
         handle = client.request_features(
@@ -70,6 +72,33 @@ def test_request_features_service_error():
         "error_code": "MOONCAKE_WRITE_FAILED",
         "message": "batch_put_from failed",
     }
+
+    with patch("urllib.request.urlopen", return_value=_MockHTTPResponse(payload)):
+        with pytest.raises(RemoteSGLangError, match="MOONCAKE_WRITE_FAILED"):
+            client.request_features(
+                sample_key="dataset:1",
+                input_ids=[1, 2],
+                packed_loss_mask="mask",
+                multimodal_inputs=None,
+                feature_schema_version="eagle3.v1",
+            )
+
+
+def test_request_features_service_error_from_list_payload():
+    client = RemoteSGLangClient(
+        "http://127.0.0.1:8000",
+        timeout_seconds=1.0,
+        max_retries=0,
+        hidden_size=4,
+        num_aux_hidden_layers=2,
+    )
+    payload = [
+        {
+            "status": "error",
+            "error_code": "MOONCAKE_WRITE_FAILED",
+            "message": "batch_put_from failed",
+        }
+    ]
 
     with patch("urllib.request.urlopen", return_value=_MockHTTPResponse(payload)):
         with pytest.raises(RemoteSGLangError, match="MOONCAKE_WRITE_FAILED"):
