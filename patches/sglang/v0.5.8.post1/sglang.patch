@@ -594,9 +594,10 @@ index e818deaa4..4dbbe539d 100644
 +                )
 +                config.protocol = mooncake_target.get("protocol", config.protocol)
 +                config.device_name = mooncake_target.get("device_name", config.device_name)
-+                config.enable_gpu_direct = mooncake_target.get(
-+                    "enable_gpu_direct", config.enable_gpu_direct
-+                )
++                if hasattr(config, "enable_gpu_direct"):
++                    config.enable_gpu_direct = mooncake_target.get(
++                        "enable_gpu_direct", getattr(config, "enable_gpu_direct", False)
++                    )
 +
 +            store = EagleMooncakeStore(config)
 +            store.setup(device=self.device)
