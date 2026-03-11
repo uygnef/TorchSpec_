@@ -396,6 +396,7 @@ index 624812186..4f913eb0f 100644
 +    spec_training_data_ids: Optional[List[str]] = None
 +    packed_loss_masks: Optional[List[str]] = None
 +    spec_training_mooncake_store_keys: Optional[List[List[str]]] = None
++    spec_training_tensor_shapes: Optional[List[Optional[Dict[str, List[int]]]]] = None
 +
  
  @dataclass
@@ -461,6 +462,7 @@ index 8f3441b1b..f60a43078 100644
 +        self.packed_loss_mask = packed_loss_mask
 +        self.mooncake_target = mooncake_target
 +        self.spec_training_mooncake_store_keys: List[str] = []
++        self.spec_training_tensor_shapes: Optional[Dict[str, List[int]]] = None
 +
          # Require reasoning for the request (hybrid reasoning model only)
          self.require_reasoning = require_reasoning
@@ -906,7 +908,7 @@ index d79f929d3..54e7b5bb8 100644
 +                f"Spec training request {req.rid} missing Mooncake target or store initialization failed."
 +            )
 +
-+        mooncake_store.put(
++        shapes = mooncake_store.put(
 +            key=key,
 +            hidden_states=hidden_states,
 +            input_ids=input_ids,
@@ -914,6 +916,9 @@ index d79f929d3..54e7b5bb8 100644
 +        )
 +
 +        req.spec_training_mooncake_store_keys.append(key)
++        req.spec_training_tensor_shapes = {
++            name: list(shape) for name, shape in shapes.items()
++        }
 +        batch.spec_training_info.mooncake_store_keys[data_id].append(key)
 +
 +    def _flush_decode_hs_to_mooncake(
@@ -980,7 +985,7 @@ index d79f929d3..54e7b5bb8 100644
 +                f"Spec training request {req.rid} missing Mooncake target or store initialization failed."
 +            )
 +
-+        mooncake_store.put(
++        shapes = mooncake_store.put(
 +            key=key,
 +            hidden_states=all_hidden_states,
 +            input_ids=input_ids,
@@ -988,6 +993,9 @@ index d79f929d3..54e7b5bb8 100644
 +        )
 +
 +        req.spec_training_mooncake_store_keys.append(key)
++        req.spec_training_tensor_shapes = {
++            name: list(shape) for name, shape in shapes.items()
++        }
 +        if (
 +            batch.spec_training_info is not None
 +            and data_id in batch.spec_training_info.mooncake_store_keys
@@ -1009,10 +1017,12 @@ index d79f929d3..54e7b5bb8 100644
 +            spec_training_data_ids = []
 +            packed_loss_masks = []
 +            spec_training_mooncake_store_keys = []
++            spec_training_tensor_shapes = []
 +        else:
 +            spec_training_data_ids = None
 +            packed_loss_masks = None
 +            spec_training_mooncake_store_keys = None
++            spec_training_tensor_shapes = None
 +
          queue_times = []
          forward_entry_times = []
@@ -1027,6 +1037,7 @@ index d79f929d3..54e7b5bb8 100644
 +                    spec_training_mooncake_store_keys.append(
 +                        req.spec_training_mooncake_store_keys
 +                    )
++                    spec_training_tensor_shapes.append(req.spec_training_tensor_shapes)
 +
                  if return_logprob:
                      if (
@@ -1059,6 +1070,11 @@ index d79f929d3..54e7b5bb8 100644
 +                    spec_training_mooncake_store_keys=(
 +                        spec_training_mooncake_store_keys
 +                        if spec_training_mooncake_store_keys
++                        else None
++                    ),
++                    spec_training_tensor_shapes=(
++                        spec_training_tensor_shapes
++                        if spec_training_tensor_shapes
 +                        else None
 +                    ),
                  )
@@ -1132,6 +1148,9 @@ index 69806de1d..411752d0b 100644
 +                    meta_info["packed_loss_mask"] = recv_obj.packed_loss_masks[i]
 +                    meta_info["spec_training_mooncake_store_keys"] = (
 +                        recv_obj.spec_training_mooncake_store_keys[i]
++                    )
++                    meta_info["spec_training_tensor_shapes"] = (
++                        recv_obj.spec_training_tensor_shapes[i]
 +                    )
 +
                  trace_req_finish(

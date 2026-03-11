@@ -17,3 +17,11 @@ def test_sglang_patch_routes_mooncake_target_per_request():
         patch_text = (PATCH_DIR / patch_name).read_text()
         assert "mooncake_target" in patch_text
         assert "def get_eagle_mooncake_store" in patch_text
+
+
+def test_sglang_patch_reports_actual_tensor_shapes():
+    for patch_name in ("sglang.patch", "sglang_decode.patch"):
+        patch_text = (PATCH_DIR / patch_name).read_text()
+        assert "spec_training_tensor_shapes" in patch_text
+        assert "req.spec_training_tensor_shapes = {" in patch_text
+        assert 'meta_info["spec_training_tensor_shapes"]' in patch_text

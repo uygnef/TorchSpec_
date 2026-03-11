@@ -201,6 +201,41 @@ def test_request_features_with_cached_prompt_tokens_returns_suffix_handle():
     assert handle.tensor_shapes["input_ids"] == (4,)
 
 
+def test_request_features_prefers_service_reported_tensor_shapes():
+    client = RemoteSGLangClient(
+        "http://127.0.0.1:8000",
+        timeout_seconds=1.0,
+        max_retries=0,
+        hidden_size=4,
+        num_aux_hidden_layers=2,
+    )
+    payload = {
+        "meta_info": {
+            "prompt_tokens": 10,
+            "cached_tokens": 0,
+            "spec_training_mooncake_store_keys": ["feature:dataset:shape"],
+            "spec_training_tensor_shapes": {
+                "hidden_states": [3, 8],
+                "input_ids": [10],
+                "last_hidden_states": [3, 4],
+            },
+        }
+    }
+
+    with patch("urllib.request.urlopen", return_value=_MockHTTPResponse(payload)):
+        handle = client.request_features(
+            sample_key="dataset:shape",
+            input_ids=list(range(10)),
+            packed_loss_mask="1" * 10,
+            multimodal_inputs=None,
+            feature_schema_version="eagle3.v1",
+        )
+
+    assert handle.tensor_shapes["hidden_states"] == (3, 8)
+    assert handle.tensor_shapes["last_hidden_states"] == (3, 4)
+    assert handle.tensor_shapes["input_ids"] == (10,)
+
+
 def test_normalize_dtype_object_to_string():
     client = RemoteSGLangClient(
         "http://127.0.0.1:8000",

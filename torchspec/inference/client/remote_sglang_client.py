@@ -111,6 +111,9 @@ class RemoteSGLangClient:
             cached_tokens = int(meta_info.get("cached_tokens", 0) or 0)
             total_seq_len = int(meta_info.get("prompt_tokens", len(input_ids)))
             suffix_seq_len = max(total_seq_len - cached_tokens, 0)
+            tensor_shapes = self._parse_tensor_shapes(
+                meta_info.get("spec_training_tensor_shapes")
+            )
             prefix_sample_key = None
             if cached_tokens > 0:
                 prefix_sample_key = self._build_sample_key(
@@ -118,14 +121,19 @@ class RemoteSGLangClient:
                     packed_loss_mask=packed_loss_mask[:cached_tokens],
                     multimodal_inputs=None,
                 )
+            if tensor_shapes is None:
+                tensor_shapes = {
+                    "hidden_states": (
+                        suffix_seq_len,
+                        self.hidden_size * self.num_aux_hidden_layers,
+                    ),
+                    "input_ids": (total_seq_len,),
+                    "last_hidden_states": (suffix_seq_len, self.hidden_size),
+                }
             return FeatureHandle(
                 sample_key=sample_key,
                 mooncake_key=store_keys[0],
-                tensor_shapes={
-                    "hidden_states": (suffix_seq_len, self.hidden_size * self.num_aux_hidden_layers),
-                    "input_ids": (total_seq_len,),
-                    "last_hidden_states": (suffix_seq_len, self.hidden_size),
-                },
+                tensor_shapes=tensor_shapes,
                 tensor_dtypes={
                     "hidden_states": self.torch_dtype,
                     "input_ids": "int64",
@@ -148,6 +156,23 @@ class RemoteSGLangClient:
         if callable(dtype_name):
             return str(value).replace("torch.", "")
         return "bfloat16"
+
+    @staticmethod
+    def _parse_tensor_shapes(payload: Any) -> dict[str, tuple[int, ...]] | None:
+        if payload is None:
+            return None
+        if not isinstance(payload, dict):
+            raise RemoteSGLangError(
+                "Malformed feature handle response: spec_training_tensor_shapes must be an object"
+            )
+        parsed: dict[str, tuple[int, ...]] = {}
+        for name, shape in payload.items():
+            if not isinstance(name, str) or not isinstance(shape, list):
+                raise RemoteSGLangError(
+                    "Malformed feature handle response: invalid spec_training_tensor_shapes entry"
+                )
+            parsed[name] = tuple(int(dim) for dim in shape)
+        return parsed
 
     @staticmethod
     def _build_sample_key(
