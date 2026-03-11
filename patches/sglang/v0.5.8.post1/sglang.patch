@@ -368,9 +368,10 @@ index 624812186..4f913eb0f 100644
 +    spec_training_data_ids: Optional[List[str]] = None
 +    packed_loss_masks: Optional[List[str]] = None
 +    spec_training_mooncake_store_keys: Optional[List[List[str]]] = None
++    spec_training_tensor_shapes: Optional[List[Optional[Dict[str, List[int]]]]] = None
 +
- 
- @dataclass
+
+@dataclass
  class BatchMultimodalOutput(BaseBatchReq):
 @@ -1269,6 +1317,8 @@ class UpdateWeightFromDiskReqInput(BaseReq):
      token_step: int = 0

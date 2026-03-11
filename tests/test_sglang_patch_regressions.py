@@ -25,3 +25,12 @@ def test_sglang_patch_reports_actual_tensor_shapes():
         assert "spec_training_tensor_shapes" in patch_text
         assert "req.spec_training_tensor_shapes = {" in patch_text
         assert 'meta_info["spec_training_tensor_shapes"]' in patch_text
+
+
+def test_sglang_patch_adds_tensor_shapes_to_all_batch_outputs():
+    required = "spec_training_tensor_shapes: Optional[List[Optional[Dict[str, List[int]]]]] = None"
+    for patch_name in ("sglang.patch", "sglang_decode.patch"):
+        patch_text = (PATCH_DIR / patch_name).read_text()
+        assert patch_text.count(required) >= 2
+        assert "class BatchTokenIDOutput(" in patch_text
+        assert "class BatchStrOutput(" in patch_text
