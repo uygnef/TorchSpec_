@@ -82,6 +82,8 @@ REMOTE_SGLANG_ENDPOINT=http://<sglang_host>:30000 \
 bash examples/deepseek-v31-3node-h100/run_remote_smoke.sh
 ```
 
+In job environments that expose `DISTRIBUTED_MASTER_HOSTS`, the scripts will use that hostname for Mooncake by default. If you want to force DNS resolution to a concrete IP, add `RESOLVE_MASTER_IP=true`.
+
 ## Common customizations
 
 ```bash

@@ -32,6 +32,16 @@ ROOT_DIR="$(dirname "$(dirname "$SCRIPT_DIR")")"
 export HF_HOME="${HF_HOME:-$HOME/.cache/huggingface}"
 export TORCHSPEC_LOG_LEVEL=INFO
 
+resolve_host_with_python() {
+  python3 - "$1" <<'PY'
+import socket
+import sys
+
+host = sys.argv[1]
+print(socket.gethostbyname(host))
+PY
+}
+
 TRAIN_GPUS="${TRAIN_GPUS:-8}"
 TRAIN_NODES="${TRAIN_NODES:-1}"
 MODEL_PATH="${MODEL_PATH:-/nfs/ofs-llm-ssd/models/opensource/DeepSeek-V3.1}"
@@ -49,8 +59,13 @@ finally:
     s.close()
 PY
 )"
-MOONCAKE_MASTER_ADDRESS="${MOONCAKE_MASTER_ADDRESS:-$LOCAL_IP:50051}"
-MOONCAKE_METADATA_SERVER="${MOONCAKE_METADATA_SERVER:-$LOCAL_IP}"
+RESOLVE_MASTER_IP="${RESOLVE_MASTER_IP:-false}"
+MASTER_HOST_CANDIDATE="${MOONCAKE_METADATA_SERVER:-${DISTRIBUTED_MASTER_HOSTS:-${HEAD_IP:-$LOCAL_IP}}}"
+if [ "$RESOLVE_MASTER_IP" = "true" ]; then
+  MASTER_HOST_CANDIDATE="$(resolve_host_with_python "$MASTER_HOST_CANDIDATE")"
+fi
+MOONCAKE_MASTER_ADDRESS="${MOONCAKE_MASTER_ADDRESS:-$MASTER_HOST_CANDIDATE:50051}"
+MOONCAKE_METADATA_SERVER="${MOONCAKE_METADATA_SERVER:-$MASTER_HOST_CANDIDATE}"
 MOONCAKE_METADATA_PORT="${MOONCAKE_METADATA_PORT:-50052}"
 
 CONFIG_FILE="${CONFIG_FILE:-$ROOT_DIR/configs/sglang_deepseek_v31_3node.yaml}"
@@ -74,6 +89,7 @@ echo "  Remote endpoint: $REMOTE_SGLANG_ENDPOINT"
 echo "  Feature cache:   $FEATURE_CACHE_ENABLED ($FEATURE_CACHE_INDEX)"
 echo "  Mooncake master: $MOONCAKE_MASTER_ADDRESS"
 echo "  Metadata server: $MOONCAKE_METADATA_SERVER:$MOONCAKE_METADATA_PORT"
+echo "  Metadata source: ${DISTRIBUTED_MASTER_HOSTS:-${HEAD_IP:-local_ip}}"
 echo "  draft config:    auto-generated from target model unless overridden"
 echo "=============================================="
 
