@@ -310,6 +310,7 @@ index 624812186..4f913eb0f 100644
 +    # Speculative training fields
 +    spec_training_data_id: Optional[Union[List[str], str]] = None
 +    packed_loss_mask: Optional[Union[List[str], str]] = None
++    mooncake_target: Optional[Union[List[Dict[str, Any]], Dict[str, Any]]] = None
 +
 +    def is_spec_training_request(self) -> bool:
 +        return self.spec_training_data_id is not None
@@ -347,6 +348,13 @@ index 624812186..4f913eb0f 100644
 +        elif isinstance(self.packed_loss_mask, list):
 +            self.packed_loss_mask = self.packed_loss_mask * self.parallel_sample_num
 +
++        if self.mooncake_target is None:
++            self.mooncake_target = [None] * num
++        elif not isinstance(self.mooncake_target, list):
++            self.mooncake_target = [self.mooncake_target] * num
++        else:
++            self.mooncake_target = self.mooncake_target * self.parallel_sample_num
++
      def _validate_session_params(self):
          """Validate that session parameters are properly formatted."""
          if self.session_params is not None:
@@ -362,6 +370,9 @@ index 624812186..4f913eb0f 100644
 +            packed_loss_mask=(
 +                self.packed_loss_mask[i] if self.packed_loss_mask is not None else None
 +            ),
++            mooncake_target=(
++                self.mooncake_target[i] if self.mooncake_target is not None else None
++            ),
              **{
                  field: getattr(self, field)
                  for field in _API_SERVING_TIMING_MIXIN_FIELDS
@@ -372,6 +383,7 @@ index 624812186..4f913eb0f 100644
 +    # Speculative training fields
 +    spec_training_data_id: Optional[str] = None
 +    packed_loss_mask: Optional[str] = None
++    mooncake_target: Optional[Dict[str, Any]] = None
 +
  
  @dataclass
@@ -436,6 +448,7 @@ index 8f3441b1b..f60a43078 100644
          http_worker_ipc: Optional[str] = None,
 +        spec_training_data_id: Optional[str] = None,
 +        packed_loss_mask: Optional[str] = None,
++        mooncake_target: Optional[Dict[str, Any]] = None,
      ):
          # Input and output info
          self.rid = rid
@@ -446,6 +459,7 @@ index 8f3441b1b..f60a43078 100644
 +        # Spec training fields
 +        self.spec_training_data_id = spec_training_data_id
 +        self.packed_loss_mask = packed_loss_mask
++        self.mooncake_target = mooncake_target
 +        self.spec_training_mooncake_store_keys: List[str] = []
 +
          # Require reasoning for the request (hybrid reasoning model only)
@@ -577,27 +591,10 @@ index e818deaa4..14cdfd90b 100644
          # Init moe config and GEMM config (FP8 GEMM, etc.)
          self.init_moe_gemm_config()
  
-+        # Start mooncake store init in background (overlaps with model loading)
-+        self._mooncake_init_thread = None
-+        self._mooncake_init_error = None
 +        self.eagle_mooncake_store = None
++        self._eagle_mooncake_stores = {}
 +        self._decode_hs_storage = {}
 +        self._decode_lhs_storage = {}
-+        if self.server_args.enable_spec_training_mooncake and self.attn_tp_rank == 0:
-+            import threading
-+
-+            mooncake_device = torch.device(f"cuda:{self.gpu_id}")
-+
-+            def _init_mooncake():
-+                try:
-+                    self.init_eagle_mooncake_store(device=mooncake_device)
-+                except Exception as e:
-+                    self._mooncake_init_error = e
-+
-+            self._mooncake_init_thread = threading.Thread(
-+                target=_init_mooncake, daemon=True
-+            )
-+            self._mooncake_init_thread.start()
 +
          # Launch a model worker and draft model worker if using speculative decoding
          self.init_model_worker()
@@ -606,12 +603,6 @@ index e818deaa4..14cdfd90b 100644
          # Init the grammar backend for constrained generation
          self.grammar_manager = GrammarManager(self)
  
-+        # Wait for background mooncake store init to complete
-+        if self._mooncake_init_thread is not None:
-+            self._mooncake_init_thread.join()
-+            if self._mooncake_init_error is not None:
-+                raise self._mooncake_init_error
-+
          self.is_initializing = False
  
      def init_model_config(self):
@@ -619,27 +610,58 @@ index e818deaa4..14cdfd90b 100644
          self.forward_sleep_time = None
          self._engine_paused = False
  
-+    def init_eagle_mooncake_store(self, device=None):
-+        # Per-request GPU storage for decode hidden state accumulation
-+        self._decode_hs_storage = {}
-+        self._decode_lhs_storage = {}
-+        if self.server_args.enable_spec_training_mooncake:
-+            try:
-+                from torchspec.transfer.mooncake import (
-+                    EagleMooncakeStore,
-+                    MooncakeConfig,
++    def _get_eagle_mooncake_store_key(self, mooncake_target):
++        if mooncake_target is None:
++            return "__env__"
++        if isinstance(mooncake_target, dict):
++            return tuple(sorted(mooncake_target.items()))
++        return str(mooncake_target)
++
++    def init_eagle_mooncake_store(self, mooncake_target=None, device=None):
++        if not self.server_args.enable_spec_training_mooncake or self.attn_tp_rank != 0:
++            return None
++
++        key = self._get_eagle_mooncake_store_key(mooncake_target)
++        if key in self._eagle_mooncake_stores:
++            self.eagle_mooncake_store = self._eagle_mooncake_stores[key]
++            return self.eagle_mooncake_store
++
++        try:
++            from torchspec.config.mooncake_config import MooncakeConfig
++            from torchspec.transfer.mooncake import EagleMooncakeStore
++
++            config = MooncakeConfig.from_env()
++            if mooncake_target:
++                config.master_server_address = mooncake_target.get(
++                    "master_server_address", config.master_server_address
++                )
++                config.metadata_server = mooncake_target.get(
++                    "metadata_server", config.metadata_server
++                )
++                config.protocol = mooncake_target.get("protocol", config.protocol)
++                config.device_name = mooncake_target.get("device_name", config.device_name)
++                config.enable_gpu_direct = mooncake_target.get(
++                    "enable_gpu_direct", config.enable_gpu_direct
 +                )
 +
-+                config = MooncakeConfig.from_env()
-+                store = EagleMooncakeStore(config)
-+                store.setup(device=device or self.device)
-+                store.warmup_rdma()
-+                self.eagle_mooncake_store = store
-+                logger.info("EagleMooncakeStore initialized for spec training")
-+            except ImportError:
-+                logger.warning(
-+                    "torchspec.mooncake not found. Spec training mooncake store disabled."
-+                )
++            store = EagleMooncakeStore(config)
++            store.setup(device=device or self.device)
++            self._eagle_mooncake_stores[key] = store
++            self.eagle_mooncake_store = store
++            logger.info(
++                f"EagleMooncakeStore initialized for spec training target={config.master_server_address}"
++            )
++            return store
++        except ImportError:
++            logger.warning(
++                "torchspec.mooncake not found. Spec training mooncake store disabled."
++            )
++            return None
++
++    def get_eagle_mooncake_store(self, req):
++        if req.spec_training_data_id is None:
++            return None
++        return self.init_eagle_mooncake_store(req.mooncake_target, device=self.device)
 +
      def init_chunked_prefill(self):
          # Init chunked prefill
@@ -650,6 +672,7 @@ index e818deaa4..14cdfd90b 100644
                  dllm_config=self.dllm_config,
 +                spec_training_data_id=recv_req.spec_training_data_id,
 +                packed_loss_mask=recv_req.packed_loss_mask,
++                mooncake_target=recv_req.mooncake_target,
              )
              req.tokenizer = self.tokenizer
  
@@ -820,10 +843,11 @@ index d79f929d3..54e7b5bb8 100644
 +            hidden_state_offset : hidden_state_offset + seq_len
 +        ]
 +
++        mooncake_store = self.get_eagle_mooncake_store(req)
 +        if (
 +            batch.spec_training_info is not None
 +            and batch.spec_training_info.has_request(req.rid)
-+            and self.eagle_mooncake_store is not None
++            and mooncake_store is not None
 +        ):
 +            if req.sampling_params.max_new_tokens > 0:
 +                # Decode mode: accumulate on GPU for later Mooncake storage
@@ -875,7 +899,13 @@ index d79f929d3..54e7b5bb8 100644
 +        if hidden_states.is_cuda and copy_done_event is not None:
 +            torch.cuda.current_stream().wait_event(copy_done_event)
 +
-+        self.eagle_mooncake_store.put(
++        mooncake_store = self.get_eagle_mooncake_store(req)
++        if mooncake_store is None:
++            raise RuntimeError(
++                f"Spec training request {req.rid} missing Mooncake target or store initialization failed."
++            )
++
++        mooncake_store.put(
 +            key=key,
 +            hidden_states=hidden_states,
 +            input_ids=input_ids,
@@ -943,7 +973,13 @@ index d79f929d3..54e7b5bb8 100644
 +            f"lhs={tuple(all_last_hidden_states.shape) if all_last_hidden_states is not None else None}, "
 +            f"prompt={len(req.origin_input_ids)}, output={len(req.output_ids)}"
 +        )
-+        self.eagle_mooncake_store.put(
++        mooncake_store = self.get_eagle_mooncake_store(req)
++        if mooncake_store is None:
++            raise RuntimeError(
++                f"Spec training request {req.rid} missing Mooncake target or store initialization failed."
++            )
++
++        mooncake_store.put(
 +            key=key,
 +            hidden_states=all_hidden_states,
 +            input_ids=input_ids,
@@ -964,8 +1000,9 @@ index d79f929d3..54e7b5bb8 100644
          routed_experts = None
          customized_info = {}
  
-+        if self.attn_tp_rank == 0 and self.eagle_mooncake_store is not None:
-+            self.eagle_mooncake_store.flush()
++        if self.attn_tp_rank == 0:
++            for store in self._eagle_mooncake_stores.values():
++                store.flush()
 +
 +        if self.attn_tp_rank == 0:
 +            spec_training_data_ids = []
@@ -1001,9 +1038,7 @@ index d79f929d3..54e7b5bb8 100644
 -                        output_hidden_states = []
 -                    output_hidden_states.append(req.hidden_states)
 +                    uses_mooncake = (
-+                        self.attn_tp_rank == 0
-+                        and req.spec_training_data_id is not None
-+                        and self.eagle_mooncake_store is not None
++                        self.attn_tp_rank == 0 and req.spec_training_data_id is not None
 +                    )
 +                    if not uses_mooncake:
 +                        if output_hidden_states is None:
@@ -1076,6 +1111,7 @@ index 69806de1d..411752d0b 100644
                  num_items_assigned=obj.num_items_assigned,
 +                spec_training_data_id=obj.spec_training_data_id,
 +                packed_loss_mask=obj.packed_loss_mask,
++                mooncake_target=obj.mooncake_target,
              )
          elif isinstance(obj, EmbeddingReqInput):
              tokenized_obj = TokenizedEmbeddingReqInput(

@@ -39,6 +39,7 @@ class RemoteSGLangClient:
         packed_loss_mask: str,
         multimodal_inputs: Optional[dict[str, Any]],
         feature_schema_version: str,
+        mooncake_target: Optional[dict[str, Any]] = None,
     ) -> FeatureHandle:
         payload = {
             "input_ids": input_ids,
@@ -47,6 +48,8 @@ class RemoteSGLangClient:
             "spec_training_data_id": sample_key,
             "packed_loss_mask": packed_loss_mask,
         }
+        if mooncake_target:
+            payload["mooncake_target"] = mooncake_target
         if multimodal_inputs:
             payload.update(multimodal_inputs)
         request = urllib.request.Request(

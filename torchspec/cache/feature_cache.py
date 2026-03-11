@@ -77,6 +77,7 @@ class FeatureCache:
             feature_schema_version=sample.get(
                 "feature_schema_version", self.feature_schema_version
             ),
+            mooncake_target=self._build_mooncake_target(),
         )
         self.manifest.upsert(handle)
         return handle
@@ -174,6 +175,20 @@ class FeatureCache:
         import torch
 
         return torch.tensor(list(input_ids), dtype=torch.int64, device=device)
+
+    def _build_mooncake_target(self) -> dict[str, Any] | None:
+        config = getattr(self.mooncake_store, "config", None)
+        if config is None:
+            return None
+
+        target = {
+            "master_server_address": getattr(config, "master_server_address", None),
+            "metadata_server": getattr(config, "metadata_server", None),
+            "protocol": getattr(config, "protocol", None),
+            "device_name": getattr(config, "device_name", None),
+            "enable_gpu_direct": getattr(config, "enable_gpu_direct", None),
+        }
+        return {key: value for key, value in target.items() if value is not None}
 
     @staticmethod
     def _torch_dtypes(dtypes: dict[str, str]) -> dict[str, Any]:

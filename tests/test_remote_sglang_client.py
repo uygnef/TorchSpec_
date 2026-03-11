@@ -26,6 +26,11 @@ class _MockHTTPResponse:
         return False
 
 
+def _capture_request_payload(mock_urlopen):
+    request = mock_urlopen.call_args.args[0]
+    return json.loads(request.data.decode("utf-8"))
+
+
 def test_request_features_success():
     client = RemoteSGLangClient(
         "http://127.0.0.1:8000",
@@ -52,9 +57,13 @@ def test_request_features_success():
             packed_loss_mask="mask",
             multimodal_inputs=None,
             feature_schema_version="eagle3.v1",
+            mooncake_target={"master_server_address": "10.0.0.1:50051"},
         )
 
     assert mock_urlopen.call_count == 1
+    assert _capture_request_payload(mock_urlopen)["mooncake_target"]["master_server_address"] == (
+        "10.0.0.1:50051"
+    )
     assert handle.sample_key == "dataset:1"
     assert handle.mooncake_key == "feature:dataset:1"
     assert handle.tensor_shapes["hidden_states"] == (2, 8)
@@ -203,3 +212,26 @@ def test_normalize_dtype_object_to_string():
     )
 
     assert client.torch_dtype == "bfloat16"
+
+
+def test_request_features_omits_empty_mooncake_target():
+    client = RemoteSGLangClient(
+        "http://127.0.0.1:8000",
+        timeout_seconds=1.0,
+        max_retries=0,
+        hidden_size=4,
+        num_aux_hidden_layers=2,
+    )
+    payload = [{"meta_info": {"spec_training_mooncake_store_keys": ["feature:dataset:1"]}}]
+
+    with patch("urllib.request.urlopen", return_value=_MockHTTPResponse(payload)) as mock_urlopen:
+        client.request_features(
+            sample_key="dataset:1",
+            input_ids=[1, 2],
+            packed_loss_mask="mask",
+            multimodal_inputs=None,
+            feature_schema_version="eagle3.v1",
+            mooncake_target=None,
+        )
+
+    assert "mooncake_target" not in _capture_request_payload(mock_urlopen)

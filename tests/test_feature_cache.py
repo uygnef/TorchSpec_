@@ -15,6 +15,17 @@ class _MockMooncakeStore:
     def __init__(self):
         self.existing = set()
         self.get_calls = 0
+        self.config = type(
+            "Config",
+            (),
+            {
+                "master_server_address": "10.0.0.1:50051",
+                "metadata_server": "http://10.0.0.1:8090/metadata",
+                "protocol": "tcp",
+                "device_name": "",
+                "enable_gpu_direct": False,
+            },
+        )()
 
     def exists(self, key: str) -> bool:
         return key in self.existing
@@ -32,9 +43,11 @@ class _MockRemoteClient:
     def __init__(self, handle: FeatureHandle):
         self.handle = handle
         self.calls = 0
+        self.last_kwargs = None
 
     def request_features(self, **kwargs):
         self.calls += 1
+        self.last_kwargs = kwargs
         return self.handle
 
 
@@ -87,6 +100,36 @@ def test_feature_cache_miss_fetches_remote(tmp_path):
     assert resolved == handle
     assert manifest.get("sample-2") == handle
     assert cache.metrics["misses"] == 1
+    assert remote_client.handle == handle
+
+
+def test_feature_cache_passes_mooncake_target(tmp_path):
+    manifest = CacheManifest(str(tmp_path / "manifest.sqlite3"))
+    handle = FeatureHandle(
+        sample_key="sample-target",
+        mooncake_key="feature:sample-target",
+        tensor_shapes={"hidden_states": (2, 4), "input_ids": (2,)},
+        tensor_dtypes={"hidden_states": "float32", "input_ids": "int64"},
+        feature_schema_version="eagle3.v1",
+        created_at=2.0,
+    )
+
+    mooncake_store = _MockMooncakeStore()
+    remote_client = _MockRemoteClient(handle)
+    cache = FeatureCache(manifest, remote_client, mooncake_store)
+
+    cache.resolve_handle(
+        {"sample_key": "sample-target", "input_ids": [1, 2], "packed_loss_mask": "11"}
+    )
+
+    assert remote_client.calls == 1
+    assert remote_client.last_kwargs["mooncake_target"] == {
+        "master_server_address": "10.0.0.1:50051",
+        "metadata_server": "http://10.0.0.1:8090/metadata",
+        "protocol": "tcp",
+        "device_name": "",
+        "enable_gpu_direct": False,
+    }
 
 
 def test_feature_cache_regenerates_stale_entry(tmp_path):
