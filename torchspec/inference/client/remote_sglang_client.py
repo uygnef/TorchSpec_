@@ -12,12 +12,24 @@ class RemoteSGLangError(RuntimeError):
 
 
 class RemoteSGLangClient:
-    def __init__(self, endpoint: str, timeout_seconds: float = 30.0, max_retries: int = 2):
+    def __init__(
+        self,
+        endpoint: str,
+        timeout_seconds: float = 30.0,
+        max_retries: int = 2,
+        *,
+        hidden_size: int,
+        num_aux_hidden_layers: int,
+        torch_dtype: str = "bfloat16",
+    ):
         if not endpoint:
             raise ValueError("Remote SGLang endpoint must be configured")
         self.endpoint = endpoint.rstrip("/")
         self.timeout_seconds = timeout_seconds
         self.max_retries = max_retries
+        self.hidden_size = hidden_size
+        self.num_aux_hidden_layers = num_aux_hidden_layers
+        self.torch_dtype = torch_dtype
 
     def request_features(
         self,
@@ -28,12 +40,14 @@ class RemoteSGLangClient:
         feature_schema_version: str,
     ) -> FeatureHandle:
         payload = {
-            "sample_key": sample_key,
             "input_ids": input_ids,
+            "sampling_params": {"max_new_tokens": 0},
+            "return_hidden_states": True,
+            "spec_training_data_id": sample_key,
             "packed_loss_mask": packed_loss_mask,
-            "multimodal_inputs": multimodal_inputs,
-            "feature_schema_version": feature_schema_version,
         }
+        if multimodal_inputs:
+            payload.update(multimodal_inputs)
         request = urllib.request.Request(
             url=f"{self.endpoint}/generate_for_spec_training",
             data=json.dumps(payload).encode("utf-8"),
@@ -46,7 +60,12 @@ class RemoteSGLangClient:
             try:
                 with urllib.request.urlopen(request, timeout=self.timeout_seconds) as response:
                     body = json.loads(response.read().decode("utf-8"))
-                return self._parse_response(body)
+                return self._parse_response(
+                    body=body,
+                    sample_key=sample_key,
+                    input_ids=input_ids,
+                    feature_schema_version=feature_schema_version,
+                )
             except urllib.error.HTTPError as exc:
                 body = exc.read().decode("utf-8") if hasattr(exc, "read") else ""
                 raise RemoteSGLangError(
@@ -61,23 +80,41 @@ class RemoteSGLangClient:
         raise RemoteSGLangError(f"Remote SGLang request failed: {last_error}") from last_error
 
     @staticmethod
-    def _parse_response(body: dict[str, Any]) -> FeatureHandle:
+    def _parse_response(
+        self,
+        *,
+        body: dict[str, Any],
+        sample_key: str,
+        input_ids: list[int],
+        feature_schema_version: str,
+    ) -> FeatureHandle:
         status = body.get("status", "ok")
         if status != "ok":
             raise RemoteSGLangError(
                 f"{body.get('error_code', 'UNKNOWN_ERROR')}: {body.get('message', 'request failed')}"
             )
         try:
+            meta_info = body["meta_info"]
+            store_keys = meta_info["spec_training_mooncake_store_keys"]
+            if not store_keys:
+                raise RemoteSGLangError("Spec training response missing mooncake store keys")
+            seq_len = int(meta_info.get("prompt_tokens", len(input_ids)))
             return FeatureHandle(
-                sample_key=body["sample_key"],
-                mooncake_key=body["mooncake_key"],
+                sample_key=sample_key,
+                mooncake_key=store_keys[0],
                 tensor_shapes={
-                    name: tuple(shape) for name, shape in body.get("tensor_shapes", {}).items()
+                    "hidden_states": (seq_len, self.hidden_size * self.num_aux_hidden_layers),
+                    "input_ids": (seq_len,),
+                    "last_hidden_states": (seq_len, self.hidden_size),
                 },
-                tensor_dtypes=body.get("tensor_dtypes", {}),
-                feature_schema_version=body["feature_schema_version"],
-                created_at=float(body["created_at"]),
-                expires_at=body.get("expires_at"),
+                tensor_dtypes={
+                    "hidden_states": self.torch_dtype,
+                    "input_ids": "int64",
+                    "last_hidden_states": self.torch_dtype,
+                },
+                feature_schema_version=feature_schema_version,
+                created_at=time.time(),
+                expires_at=None,
             )
         except KeyError as exc:
             raise RemoteSGLangError(f"Malformed feature handle response: missing {exc.args[0]}") from exc

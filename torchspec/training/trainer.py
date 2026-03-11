@@ -234,12 +234,24 @@ class Trainer(abc.ABC):
         )
 
     def _build_feature_cache(self) -> FeatureCache:
+        from transformers import AutoConfig
+
         endpoint = getattr(self.args, "remote_sglang_endpoint", None)
         manifest = CacheManifest(getattr(self.args, "feature_cache_index_path"))
+        model_config = AutoConfig.from_pretrained(
+            getattr(self.args, "target_model_path"),
+            trust_remote_code=getattr(self.args, "trust_remote_code", False),
+        )
+        hidden_size = getattr(model_config, "hidden_size")
+        aux_layers = getattr(self.args, "aux_hidden_states_layers", None)
+        num_aux_hidden_layers = len(aux_layers) if aux_layers else 3
         client = RemoteSGLangClient(
             endpoint=endpoint,
             timeout_seconds=getattr(self.args, "remote_sglang_timeout_seconds", 30.0),
             max_retries=getattr(self.args, "remote_sglang_max_retries", 2),
+            hidden_size=hidden_size,
+            num_aux_hidden_layers=num_aux_hidden_layers,
+            torch_dtype=getattr(model_config, "torch_dtype", "bfloat16") or "bfloat16",
         )
         return FeatureCache(
             manifest=manifest,
