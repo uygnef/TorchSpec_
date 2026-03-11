@@ -4,6 +4,7 @@ import urllib.error
 from unittest.mock import patch
 
 import pytest
+import torch
 
 from torchspec.inference.client.remote_sglang_client import (
     RemoteSGLangClient,
@@ -157,3 +158,16 @@ def test_request_features_missing_store_keys():
                 multimodal_inputs=None,
                 feature_schema_version="eagle3.v1",
             )
+
+
+def test_normalize_dtype_object_to_string():
+    client = RemoteSGLangClient(
+        "http://127.0.0.1:8000",
+        timeout_seconds=1.0,
+        max_retries=0,
+        hidden_size=4,
+        num_aux_hidden_layers=2,
+        torch_dtype=torch.bfloat16,
+    )
+
+    assert client.torch_dtype == "bfloat16"

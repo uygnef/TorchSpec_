@@ -29,7 +29,7 @@ class RemoteSGLangClient:
         self.max_retries = max_retries
         self.hidden_size = hidden_size
         self.num_aux_hidden_layers = num_aux_hidden_layers
-        self.torch_dtype = torch_dtype
+        self.torch_dtype = self._normalize_torch_dtype(torch_dtype)
 
     def request_features(
         self,
@@ -125,3 +125,12 @@ class RemoteSGLangClient:
             )
         except KeyError as exc:
             raise RemoteSGLangError(f"Malformed feature handle response: missing {exc.args[0]}") from exc
+
+    @staticmethod
+    def _normalize_torch_dtype(value: Any) -> str:
+        if isinstance(value, str):
+            return value.replace("torch.", "")
+        dtype_name = getattr(value, "__str__", None)
+        if callable(dtype_name):
+            return str(value).replace("torch.", "")
+        return "bfloat16"
