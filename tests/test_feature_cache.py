@@ -237,6 +237,6 @@ def test_feature_cache_fetches_missing_prefix_on_demand(tmp_path):
         device=torch.device("cpu"),
     )
 
-    assert remote_client.calls == [prefix_key]
+    assert remote_client.calls == ["sample-5", prefix_key]
     assert result["hidden_states"].shape == (3, 4)
     assert manifest.get(prefix_key) == prefix_handle
