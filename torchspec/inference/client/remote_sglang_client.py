@@ -79,7 +79,6 @@ class RemoteSGLangClient:
 
         raise RemoteSGLangError(f"Remote SGLang request failed: {last_error}") from last_error
 
-    @staticmethod
     def _parse_response(
         self,
         *,
