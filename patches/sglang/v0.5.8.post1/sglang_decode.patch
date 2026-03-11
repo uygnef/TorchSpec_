@@ -921,7 +921,7 @@ index d79f929d3..e40a1dee3 100644
 +                f"Spec training request {req.rid} missing Mooncake target or store initialization failed."
 +            )
 +
-+        mooncake_store.put(
++        shapes = mooncake_store.put(
 +            key=key,
 +            hidden_states=all_hidden_states,
 +            input_ids=input_ids,

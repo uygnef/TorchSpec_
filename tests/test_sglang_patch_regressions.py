@@ -25,6 +25,7 @@ def test_sglang_patch_reports_actual_tensor_shapes():
         assert "spec_training_tensor_shapes" in patch_text
         assert "req.spec_training_tensor_shapes = {" in patch_text
         assert 'meta_info["spec_training_tensor_shapes"]' in patch_text
+        assert patch_text.count("shapes = mooncake_store.put(") >= 2
 
 
 def test_sglang_patch_adds_tensor_shapes_to_all_batch_outputs():
