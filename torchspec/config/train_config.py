@@ -144,9 +144,18 @@ class DecodeConfig:
 
 @dataclass
 class Config:
+    @dataclass
+    class FeatureCacheConfig:
+        enabled: bool = False
+        index_path: str = "./cache/feature_cache.sqlite3"
+        delete_after_read: bool = False
+        stale_on_missing: bool = True
+        gc_max_age_seconds: Optional[int] = None
+
     dataset: DatasetConfig = field(default_factory=DatasetConfig)
     debug: DebugConfig = field(default_factory=DebugConfig)
     decode: DecodeConfig = field(default_factory=DecodeConfig)
+    feature_cache: FeatureCacheConfig = field(default_factory=FeatureCacheConfig)
     inference: InferenceConfig = field(default_factory=InferenceConfig)
     logging: LoggingConfig = field(default_factory=LoggingConfig)
     model: ModelConfig = field(default_factory=ModelConfig)
@@ -261,7 +270,9 @@ def load_config(
 # Sub-sections whose fields receive a name prefix when flattened.
 _PREFIXED_SECTIONS = {
     "decode": "decode_",
+    "feature_cache": "feature_cache_",
     "mooncake": "mooncake_",
+    "remote_sglang": "remote_sglang_",
     "sglang": "sglang_",
     "vllm": "vllm_",
 }

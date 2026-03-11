@@ -57,6 +57,7 @@ class MooncakeDataset(IterableDataset):
         device: torch.device,
         prefetch_factor: int = 2,
         timeout: Optional[float] = None,
+        delete_after_read: bool = True,
     ):
         """
         Args:
@@ -71,6 +72,7 @@ class MooncakeDataset(IterableDataset):
         self.device = device
         self.prefetch_factor = prefetch_factor
         self.timeout = timeout
+        self.delete_after_read = delete_after_read
 
     def _load_from_mooncake(self, sample: TrainSample) -> Dict[str, Any]:
         """Load tensors from mooncake key into device memory."""
@@ -108,6 +110,9 @@ class MooncakeDataset(IterableDataset):
 
     def _cleanup_mooncake_data(self, sample: TrainSample) -> None:
         """Remove data from mooncake store to release buffer space."""
+        if not self.delete_after_read:
+            return
+
         shapes = sample.tensor_shapes or {}
         has_lhs = "last_hidden_states" in shapes
         has_target = "target" in shapes
@@ -174,6 +179,7 @@ def create_mooncake_dataloader(
     batch_size: int = 1,
     prefetch_factor: int = 2,
     timeout: Optional[float] = None,
+    delete_after_read: bool = True,
 ) -> DataLoader:
     """Create a DataLoader that fetches from mooncake via queue.
 
@@ -197,7 +203,14 @@ def create_mooncake_dataloader(
     Returns:
         DataLoader instance.
     """
-    dataset = MooncakeDataset(ray_queue, mooncake_store, device, prefetch_factor, timeout)
+    dataset = MooncakeDataset(
+        ray_queue,
+        mooncake_store,
+        device,
+        prefetch_factor,
+        timeout,
+        delete_after_read,
+    )
 
     return DataLoader(
         dataset,
@@ -232,6 +245,7 @@ class MooncakeDataFetcher:
         batch_size: int = 1,
         prefetch_factor: int = 2,
         timeout: Optional[float] = None,
+        delete_after_read: bool = True,
     ):
         self.batch_size = batch_size
         self._dataloader = create_mooncake_dataloader(
@@ -242,6 +256,7 @@ class MooncakeDataFetcher:
             batch_size=batch_size,
             prefetch_factor=prefetch_factor,
             timeout=timeout,
+            delete_after_read=delete_after_read,
         )
 
     def __iter__(self) -> Iterator[Dict[str, torch.Tensor]]:

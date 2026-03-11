@@ -142,6 +142,34 @@ class TestMooncakeDataset:
 
         assert len(samples) == 1
 
+    def test_keeps_mooncake_data_when_delete_after_read_disabled(self):
+        ray_queue = MockRayQueue()
+        store = MockMooncakeStore()
+        device = torch.device("cpu")
+        sample = make_sample(0)
+        store.put_tensors(
+            sample.mooncake_key,
+            {
+                "input_ids": torch.ones((128,), dtype=torch.long),
+                "labels": torch.ones((128,), dtype=torch.long),
+            },
+        )
+
+        ray_queue.put(sample)
+        ray_queue.put(None)
+
+        dataset = MooncakeDataset(
+            ray_queue,
+            store,
+            device,
+            prefetch_factor=2,
+            delete_after_read=False,
+        )
+        samples = list(dataset)
+
+        assert len(samples) == 1
+        assert sample.mooncake_key in store._data
+
 
 class TestCreateMooncakeDataloader:
     def test_default_batch_size_is_one(self):

@@ -167,6 +167,8 @@ class Trainer(abc.ABC):
             collator=collator,
             device=torch.cuda.current_device(),
             batch_size=per_dp_rank_batch_size,
+            delete_after_read=not getattr(self.args, "feature_cache_enabled", False)
+            or getattr(self.args, "feature_cache_delete_after_read", True),
         )
 
         logger.info(
@@ -198,6 +200,8 @@ class Trainer(abc.ABC):
             collator=collator,
             device=torch.cuda.current_device(),
             batch_size=per_dp_rank_batch_size,
+            delete_after_read=not getattr(self.args, "feature_cache_enabled", False)
+            or getattr(self.args, "feature_cache_delete_after_read", True),
         )
         self._eval_collator = collator
         self._eval_cache: list[dict] = []

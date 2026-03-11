@@ -27,6 +27,12 @@ training:
   warmup_ratio: 0.015
 
 inference:
+  mode: local
+  remote_sglang:
+    endpoint: null
+    timeout_seconds: 30.0
+    max_retries: 2
+    feature_schema_version: eagle3.v1
   sglang:
     mem_fraction_static: 0.8
     tp_size: 1
@@ -63,6 +69,13 @@ mooncake:
   max_seq_len: 8192
   hidden_dim: 4096
   gpu_buffer_size: null
+
+feature_cache:
+  enabled: false
+  index_path: ./cache/feature_cache.sqlite3
+  delete_after_read: false
+  stale_on_missing: true
+  gc_max_age_seconds: null
 
 cache_dir: ./cache
 output_dir: ???

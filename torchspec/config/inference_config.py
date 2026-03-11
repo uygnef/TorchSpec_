@@ -112,15 +112,24 @@ class VllmConfig:
 
 @dataclass
 class InferenceConfig:
+    @dataclass
+    class RemoteSGLangConfig:
+        endpoint: Optional[str] = None
+        timeout_seconds: float = 30.0
+        max_retries: int = 2
+        feature_schema_version: str = "eagle3.v1"
+
     aux_hidden_states_layers: Optional[list] = None
     inference_batch_size: int = 1
     inference_buffer_threshold: int = 32
     inference_engine_type: str = "hf"
     inference_fetch_batch: int = 1
+    mode: str = "local"
     inference_num_gpus: Optional[int] = None
     inference_num_gpus_per_engine: int = 1
     inference_num_gpus_per_node: int = 8
     max_sample_pool_size: int = 0
+    remote_sglang: RemoteSGLangConfig = field(default_factory=RemoteSGLangConfig)
     sglang: SGLangConfig = field(default_factory=SGLangConfig)
     vllm: VllmConfig = field(default_factory=VllmConfig)
 
