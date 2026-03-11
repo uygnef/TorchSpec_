@@ -372,7 +372,7 @@ index 624812186..3f575ecbe
  
  @dataclass
  class BatchMultimodalDecodeReq(BaseBatchReq):
-@@ -1095,6 +1151,11 @@ class BatchStrOutput(
+@@ -1095,6 +1151,12 @@ class BatchStrOutput(
      # Customized info
      customized_info: Optional[Dict[str, List[Any]]] = None
  
@@ -380,6 +380,7 @@ index 624812186..3f575ecbe
 +    spec_training_data_ids: Optional[List[str]] = None
 +    packed_loss_masks: Optional[List[str]] = None
 +    spec_training_mooncake_store_keys: Optional[List[List[str]]] = None
++    spec_training_tensor_shapes: Optional[List[Optional[Dict[str, List[int]]]]] = None
 +
  
  @dataclass
@@ -1072,12 +1073,17 @@ index 69806de1d..8f313dd72
 +                        recv_obj.spec_training_data_ids[i]
 +                    )
 +                    meta_info["packed_loss_mask"] = recv_obj.packed_loss_masks[i]
-+                    meta_info["spec_training_mooncake_store_keys"] = (
-+                        recv_obj.spec_training_mooncake_store_keys[i]
-+                    )
-+                    meta_info["spec_training_tensor_shapes"] = (
-+                        recv_obj.spec_training_tensor_shapes[i]
-+                    )
++                    store_keys = recv_obj.spec_training_mooncake_store_keys[i]
++                    tensor_shapes = None
++                    if recv_obj.spec_training_tensor_shapes is not None:
++                        tensor_shapes = recv_obj.spec_training_tensor_shapes[i]
++                    if store_keys and tensor_shapes is None:
++                        logger.error("spec training response missing tensor shapes")
++                        raise RuntimeError(
++                            "spec training response missing tensor shapes"
++                        )
++                    meta_info["spec_training_mooncake_store_keys"] = store_keys
++                    meta_info["spec_training_tensor_shapes"] = tensor_shapes
 +
                  trace_req_finish(
                      rid,

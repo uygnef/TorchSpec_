@@ -34,3 +34,11 @@ def test_sglang_patch_adds_tensor_shapes_to_all_batch_outputs():
         assert patch_text.count(required) >= 2
         assert "class BatchTokenIDOutput(" in patch_text
         assert "class BatchStrOutput(" in patch_text
+
+
+def test_sglang_patch_fails_clearly_when_tensor_shapes_are_missing():
+    for patch_name in ("sglang.patch", "sglang_decode.patch"):
+        patch_text = (PATCH_DIR / patch_name).read_text()
+        assert 'logger.error("spec training response missing tensor shapes")' in patch_text
+        assert 'raise RuntimeError(' in patch_text
+        assert '"spec training response missing tensor shapes"' in patch_text
