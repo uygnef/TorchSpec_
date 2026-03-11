@@ -63,6 +63,15 @@ def _subprocess_preexec():
     ctypes.CDLL("libc.so.6").prctl(PR_SET_PDEATHSIG, signal.SIGTERM)
 
 
+def _normalize_ray_node_ip(host: str) -> str:
+    """Resolve loopback addresses to the current Ray node IP for node affinity."""
+    if host in {"localhost", "127.0.0.1", "::1"}:
+        resolved = RayActor.get_node_ip()
+        logger.info("Resolved loopback mooncake host %s to Ray node IP %s", host, resolved)
+        return resolved
+    return host
+
+
 class MooncakeMaster(RayActor):
     """Ray actor that wraps the mooncake master subprocess.
 
@@ -278,7 +287,9 @@ def launch_mooncake_master(args):
             port = getattr(args, "mooncake_master_port", 50051)
 
     # Pin actor to the user-specified node so the master starts on the right machine.
-    scheduling_strategy = node_affinity_for_ip(host, name="mooncake_master")
+    scheduling_strategy = node_affinity_for_ip(
+        _normalize_ray_node_ip(host), name="mooncake_master"
+    )
 
     http_port = getattr(args, "mooncake_metadata_port", None) or getattr(
         args, "mooncake_http_port", None

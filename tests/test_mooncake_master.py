@@ -284,6 +284,40 @@ class TestLaunchMooncakeMaster:
 
         assert result is None
 
+    def test_resolves_loopback_for_node_affinity(self):
+        args = Namespace(
+            mooncake_master_server_address="127.0.0.1:50051",
+            mooncake_metadata_port=8090,
+            mooncake_http_host="0.0.0.0",
+        )
+
+        mock_actor = mock.MagicMock()
+        mock_actor.start.remote.return_value = mock.MagicMock()
+        mock_decorator, _ = self._make_mock_ray_remote(mock_actor)
+
+        with (
+            mock.patch(
+                "torchspec.transfer.mooncake.utils.resolve_mooncake_master_bin",
+                return_value="/usr/bin/mooncake_master",
+            ),
+            mock.patch("os.path.exists", return_value=True),
+            mock.patch("torchspec.ray.ray_actor.get_current_node_ip", return_value="10.0.0.1"),
+            mock.patch("ray.remote", return_value=mock_decorator),
+            mock.patch(
+                "ray.get",
+                return_value={"master_addr": "10.0.0.1:50051", "metadata_port": 8090},
+            ),
+            mock.patch("atexit.register"),
+            mock.patch(
+                "torchspec.ray.ray_actor.node_affinity_for_ip",
+                return_value=None,
+            ) as mock_affinity,
+        ):
+            result = launch_mooncake_master(args)
+
+        assert result is mock_actor
+        mock_affinity.assert_called_once_with("10.0.0.1", name="mooncake_master")
+
 
 class TestMooncakeMasterIntegration:
     """Integration tests using a real subprocess (dummy script)."""
