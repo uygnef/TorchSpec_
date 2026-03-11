@@ -27,7 +27,6 @@ from typing import Any, Optional
 from omegaconf import DictConfig, OmegaConf
 
 from torchspec.config.inference_config import InferenceConfig
-from torchspec.utils.logging import logger
 
 
 @dataclass
@@ -228,6 +227,8 @@ def _validate_vllm_config(config: DictConfig) -> None:
 
 def _save_config_snapshot(config: DictConfig) -> None:
     """Save the resolved config to output_dir/config.yaml if output_dir is set."""
+    from torchspec.utils.logging import logger
+
     output_dir = OmegaConf.select(config, "output_dir", default=None)
     if not output_dir:
         return
