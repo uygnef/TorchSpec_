@@ -1,26 +1,34 @@
-torchspec sglang patch (base: 0f2df9370a)
----
- python/sglang/srt/entrypoints/engine.py            |  10 ++
- python/sglang/srt/entrypoints/http_server.py       |  17 +++
- python/sglang/srt/layers/logits_processor.py       |  57 +++++++++
- python/sglang/srt/managers/detokenizer_manager.py  |   3 +
- python/sglang/srt/managers/io_struct.py            |  48 ++++++++
- python/sglang/srt/managers/schedule_batch.py       |  56 ++++++++-
- python/sglang/srt/managers/scheduler.py            |  57 ++++++++-
- .../managers/scheduler_output_processor_mixin.py   | 134 ++++++++++++++++++---
- python/sglang/srt/managers/tokenizer_manager.py    |  16 +++
- python/sglang/srt/managers/utils.py                |   5 +-
- .../srt/model_executor/forward_batch_info.py       |   5 +-
- python/sglang/srt/model_executor/model_runner.py   |  16 +++
- python/sglang/srt/models/kimi_k25.py               |  14 +++
- python/sglang/srt/models/qwen3_next.py             |  65 +++++++++-
- python/sglang/srt/models/qwen3_next_mtp.py         |   3 +
- python/sglang/srt/server_args.py                   |  21 ++++
- .../sglang/srt/speculative/spec_training_info.py   |  50 ++++++++
- 17 files changed, 550 insertions(+), 27 deletions(-)
-
+diff --git a/assets/logo.png b/assets/logo.png
+old mode 100644
+new mode 100755
+diff --git a/assets/logo_square.png b/assets/logo_square.png
+old mode 100644
+new mode 100755
+diff --git a/benchmark/reasoning_benchmark/figure/Acc_histplot.png b/benchmark/reasoning_benchmark/figure/Acc_histplot.png
+old mode 100644
+new mode 100755
+diff --git a/benchmark/reasoning_benchmark/figure/SE_numtries.png b/benchmark/reasoning_benchmark/figure/SE_numtries.png
+old mode 100644
+new mode 100755
+diff --git a/docs/_static/image/logo.ico b/docs/_static/image/logo.ico
+old mode 100644
+new mode 100755
+diff --git a/docs/_static/image/logo.png b/docs/_static/image/logo.png
+old mode 100644
+new mode 100755
+diff --git a/examples/assets/example_image.png b/examples/assets/example_image.png
+old mode 100644
+new mode 100755
+diff --git a/examples/frontend_language/quick_start/images/cat.jpeg b/examples/frontend_language/quick_start/images/cat.jpeg
+old mode 100644
+new mode 100755
+diff --git a/examples/frontend_language/quick_start/images/dog.jpeg b/examples/frontend_language/quick_start/images/dog.jpeg
+old mode 100644
+new mode 100755
 diff --git a/python/sglang/srt/entrypoints/engine.py b/python/sglang/srt/entrypoints/engine.py
-index 8d7ab8716..b2e633016 100644
+old mode 100644
+new mode 100755
+index 8d7ab8716..b2e633016
 --- a/python/sglang/srt/entrypoints/engine.py
 +++ b/python/sglang/srt/entrypoints/engine.py
 @@ -233,6 +233,9 @@ class Engine(EngineBase):
@@ -62,7 +70,9 @@ index 8d7ab8716..b2e633016 100644
          generator = self.tokenizer_manager.generate_request(obj, None)
  
 diff --git a/python/sglang/srt/entrypoints/http_server.py b/python/sglang/srt/entrypoints/http_server.py
-index 0bcbd4a37..98348747b 100644
+old mode 100644
+new mode 100755
+index 0bcbd4a37..98348747b
 --- a/python/sglang/srt/entrypoints/http_server.py
 +++ b/python/sglang/srt/entrypoints/http_server.py
 @@ -656,6 +656,23 @@ async def generate_request(obj: GenerateReqInput, request: Request):
@@ -90,7 +100,9 @@ index 0bcbd4a37..98348747b 100644
  async def encode_request(obj: EmbeddingReqInput, request: Request):
      """Handle an embedding request."""
 diff --git a/python/sglang/srt/layers/logits_processor.py b/python/sglang/srt/layers/logits_processor.py
-index d0d7c9344..29e9c4d15 100644
+old mode 100644
+new mode 100755
+index d0d7c9344..7fda27ef9
 --- a/python/sglang/srt/layers/logits_processor.py
 +++ b/python/sglang/srt/layers/logits_processor.py
 @@ -104,6 +104,10 @@ class LogitsProcessorOutput:
@@ -104,17 +116,28 @@ index d0d7c9344..29e9c4d15 100644
  
  @dataclasses.dataclass
  class LogitsMetadata:
-@@ -146,6 +150,9 @@ class LogitsMetadata:
+@@ -146,6 +150,12 @@ class LogitsMetadata:
      # Whether this batch is prefill-only (no token generation needed)
      is_prefill_only: bool = False
  
++    # Whether to return full logits for all tokens during prefill (instead of just last token)
++    return_full_logits: bool = False
++
 +    # For spec training
 +    has_spec_training: bool = False
 +
      @classmethod
      def from_forward_batch(cls, forward_batch: ForwardBatch):
          if (
-@@ -196,6 +203,7 @@ class LogitsMetadata:
+@@ -189,6 +199,7 @@ class LogitsMetadata:
+             extend_input_logprob_token_ids_gpu=forward_batch.extend_input_logprob_token_ids_gpu,
+             padded_static_len=forward_batch.padded_static_len,
+             is_prefill_only=forward_batch.is_prefill_only,
++            return_full_logits=forward_batch.return_full_logits,
+             global_num_tokens_gpu=forward_batch.global_num_tokens_gpu,
+             dp_local_start_pos=forward_batch.dp_local_start_pos,
+             dp_local_num_tokens=forward_batch.dp_local_num_tokens,
+@@ -196,6 +207,7 @@ class LogitsMetadata:
              global_num_tokens_for_logprob_cpu=forward_batch.global_num_tokens_for_logprob_cpu,
              global_num_tokens_for_logprob_gpu=forward_batch.global_num_tokens_for_logprob_gpu,
              dp_padding_mode=DpPaddingMode.SUM_LEN,
@@ -122,19 +145,53 @@ index d0d7c9344..29e9c4d15 100644
          )
  
      def compute_dp_attention_metadata(self):
-@@ -303,6 +311,11 @@ class LogitsProcessor(nn.Module):
+@@ -303,6 +315,45 @@ class LogitsProcessor(nn.Module):
          if logits_metadata.forward_mode.is_dllm_extend():
              return self._get_dllm_logits(hidden_states, lm_head, logits_metadata)
  
++        # Return full logits for all tokens during prefill when requested
++        # Can be triggered by either the LogitsProcessor instance flag or LogitsMetadata flag
++        if (
++            self.return_full_logits or logits_metadata.return_full_logits
++        ) and logits_metadata.forward_mode.is_extend():
++            full_logits = self._get_logits(hidden_states, lm_head, logits_metadata)
++            # Also compute the last token logits for sampling
++            if logits_metadata.padded_static_len < 0:
++                last_index = torch.cumsum(logits_metadata.extend_seq_lens, dim=0) - 1
++            else:
++                idx = torch.arange(
++                    len(logits_metadata.extend_seq_lens),
++                    device=logits_metadata.extend_seq_lens.device,
++                )
++                last_index = (
++                    idx * logits_metadata.padded_static_len
++                    + logits_metadata.extend_seq_lens
++                    - 1
++                )
++            sampled_logits = full_logits[last_index]
++            return LogitsProcessorOutput(
++                next_token_logits=sampled_logits,
++                full_logits=full_logits,
++            )
++
 +        last_hidden_states = None
-+        if logits_metadata.has_spec_training:
++        # Capture last_hidden_states for spec training:
++        # - has_spec_training=True: offline training path
++        # - capture_hidden_mode=FULL in extend/verify: EAGLE3 + spec training path
++        if logits_metadata.has_spec_training or (
++            logits_metadata.capture_hidden_mode == CaptureHiddenMode.FULL
++            and (
++                logits_metadata.forward_mode.is_extend()
++                or logits_metadata.forward_mode.is_target_verify()
++            )
++        ):
 +            assert hidden_states_before_norm is None
 +            last_hidden_states = hidden_states
 +
          # Get the last hidden states and last logits for the next token prediction
          (
              pruned_states,
-@@ -330,6 +343,49 @@ class LogitsProcessor(nn.Module):
+@@ -330,6 +381,36 @@ class LogitsProcessor(nn.Module):
          )
          del hidden_states
  
@@ -150,29 +207,16 @@ index d0d7c9344..29e9c4d15 100644
 +        ):
 +            if logits_metadata.extend_seq_lens is not None:
 +                num_seqs = len(logits_metadata.extend_seq_lens)
-+            elif input_ids is not None:
-+                num_seqs = input_ids.shape[0]
 +            else:
-+                # Non-head TP rank in multi-node: input_ids not available
-+                num_seqs = 1
++                num_seqs = input_ids.shape[0]
 +            eos_token_id = getattr(self.config, "eos_token_id", 0)
 +            if isinstance(eos_token_id, list):
 +                eos_token_id = eos_token_id[0]
-+            # input_ids can be None on non-head TP ranks in multi-node setup;
-+            # last_hidden_states can be a tuple when aux_hidden_states is captured.
-+            if input_ids is not None:
-+                device = input_ids.device
-+            elif isinstance(last_hidden_states, torch.Tensor):
-+                device = last_hidden_states.device
-+            elif isinstance(last_hidden_states, tuple):
-+                device = last_hidden_states[0].device
-+            else:
-+                device = lm_head.weight.device
 +            fake_next_token_ids = torch.full(
 +                (num_seqs,),
 +                eos_token_id,
 +                dtype=torch.long,
-+                device=device,
++                device=input_ids.device,
 +            )
 +            return LogitsProcessorOutput(
 +                next_token_logits=None,
@@ -184,7 +228,23 @@ index d0d7c9344..29e9c4d15 100644
          if not logits_metadata.extend_return_logprob:
              # Compute logits for both input and sampled tokens.
              logits = self._get_logits(pruned_states, lm_head, logits_metadata)
-@@ -403,6 +459,7 @@ class LogitsProcessor(nn.Module):
+@@ -341,6 +422,7 @@ class LogitsProcessor(nn.Module):
+             return LogitsProcessorOutput(
+                 next_token_logits=sampled_logits,
+                 hidden_states=hidden_states_to_store,
++                last_hidden_states=last_hidden_states,
+             )
+ 
+         # Start to process input logprobs
+@@ -381,6 +463,7 @@ class LogitsProcessor(nn.Module):
+         return LogitsProcessorOutput(
+             next_token_logits=sampled_logits,
+             hidden_states=hidden_states_to_store,
++            last_hidden_states=last_hidden_states,
+             input_token_logprobs=logprobs_result.input_token_logprobs,
+             input_top_logprobs_val=logprobs_result.input_top_logprobs_val,
+             input_top_logprobs_idx=logprobs_result.input_top_logprobs_idx,
+@@ -403,6 +486,7 @@ class LogitsProcessor(nn.Module):
              logits_metadata.forward_mode.is_decode_or_idle()
              or logits_metadata.forward_mode.is_target_verify()
              or logits_metadata.forward_mode.is_draft_extend_v2()
@@ -193,7 +253,9 @@ index d0d7c9344..29e9c4d15 100644
              pruned_states = hidden_states
              pruned_states_before_norm = hidden_states_before_norm
 diff --git a/python/sglang/srt/managers/detokenizer_manager.py b/python/sglang/srt/managers/detokenizer_manager.py
-index a65b0dd28..e61c878cb 100644
+old mode 100644
+new mode 100755
+index a65b0dd28..e61c878cb
 --- a/python/sglang/srt/managers/detokenizer_manager.py
 +++ b/python/sglang/srt/managers/detokenizer_manager.py
 @@ -403,6 +403,9 @@ class DetokenizerManager(MultiHttpWorkerDetokenizerMixin):
@@ -203,20 +265,24 @@ index a65b0dd28..e61c878cb 100644
 +            spec_training_data_ids=recv_obj.spec_training_data_ids,
 +            packed_loss_masks=recv_obj.packed_loss_masks,
 +            spec_training_mooncake_store_keys=recv_obj.spec_training_mooncake_store_keys,
++            spec_training_tensor_shapes=recv_obj.spec_training_tensor_shapes,
          )
  
      def handle_multimodal_decode_req(self, recv_obj: BatchMultimodalDecodeReq):
 diff --git a/python/sglang/srt/managers/io_struct.py b/python/sglang/srt/managers/io_struct.py
-index 624812186..e40eaff06 100644
+old mode 100644
+new mode 100755
+index 624812186..3f575ecbe
 --- a/python/sglang/srt/managers/io_struct.py
 +++ b/python/sglang/srt/managers/io_struct.py
-@@ -273,6 +273,13 @@ class GenerateReqInput(BaseReq, APIServingTimingMixin):
+@@ -273,6 +273,14 @@ class GenerateReqInput(BaseReq, APIServingTimingMixin):
      image_max_dynamic_patch: Optional[int] = None
      video_max_dynamic_patch: Optional[int] = None
  
 +    # Speculative training fields
 +    spec_training_data_id: Optional[Union[List[str], str]] = None
 +    packed_loss_mask: Optional[Union[List[str], str]] = None
++    mooncake_target: Optional[Union[List[Dict[str, Any]], Dict[str, Any]]] = None
 +
 +    def is_spec_training_request(self) -> bool:
 +        return self.spec_training_data_id is not None
@@ -224,7 +290,7 @@ index 624812186..e40eaff06 100644
      def contains_mm_input(self) -> bool:
          return (
              has_valid_data(self.image_data)
-@@ -404,6 +411,7 @@ class GenerateReqInput(BaseReq, APIServingTimingMixin):
+@@ -404,6 +412,7 @@ class GenerateReqInput(BaseReq, APIServingTimingMixin):
          self._normalize_logprob_params(num)
          self._normalize_custom_logit_processor(num)
          self._normalize_bootstrap_params(num)
@@ -232,7 +298,7 @@ index 624812186..e40eaff06 100644
  
      def _expand_inputs(self, num):
          """Expand the main inputs (text, input_ids, input_embeds) for parallel sampling."""
-@@ -606,6 +614,24 @@ class GenerateReqInput(BaseReq, APIServingTimingMixin):
+@@ -606,6 +615,31 @@ class GenerateReqInput(BaseReq, APIServingTimingMixin):
          elif isinstance(self.bootstrap_pair_key, list):
              self.bootstrap_pair_key = self.bootstrap_pair_key * self.parallel_sample_num
  
@@ -254,10 +320,17 @@ index 624812186..e40eaff06 100644
 +        elif isinstance(self.packed_loss_mask, list):
 +            self.packed_loss_mask = self.packed_loss_mask * self.parallel_sample_num
 +
++        if self.mooncake_target is None:
++            self.mooncake_target = [None] * num
++        elif not isinstance(self.mooncake_target, list):
++            self.mooncake_target = [self.mooncake_target] * num
++        else:
++            self.mooncake_target = self.mooncake_target * self.parallel_sample_num
++
      def _validate_session_params(self):
          """Validate that session parameters are properly formatted."""
          if self.session_params is not None:
-@@ -678,6 +704,14 @@ class GenerateReqInput(BaseReq, APIServingTimingMixin):
+@@ -678,6 +712,17 @@ class GenerateReqInput(BaseReq, APIServingTimingMixin):
              return_entropy=self.return_entropy,
              external_trace_header=self.external_trace_header,
              http_worker_ipc=self.http_worker_ipc,
@@ -269,21 +342,25 @@ index 624812186..e40eaff06 100644
 +            packed_loss_mask=(
 +                self.packed_loss_mask[i] if self.packed_loss_mask is not None else None
 +            ),
++            mooncake_target=(
++                self.mooncake_target[i] if self.mooncake_target is not None else None
++            ),
              **{
                  field: getattr(self, field)
                  for field in _API_SERVING_TIMING_MIXIN_FIELDS
-@@ -765,6 +799,10 @@ class TokenizedGenerateReqInput(BaseReq):
+@@ -765,6 +810,11 @@ class TokenizedGenerateReqInput(BaseReq):
      need_wait_for_image: bool = False
      num_items_assigned: Optional[List] = None
  
 +    # Speculative training fields
 +    spec_training_data_id: Optional[str] = None
 +    packed_loss_mask: Optional[str] = None
++    mooncake_target: Optional[Dict[str, Any]] = None
 +
  
  @dataclass
  class BatchTokenizedGenerateReqInput(BaseBatchReq):
-@@ -1006,6 +1044,11 @@ class BatchTokenIDOutput(
+@@ -1006,6 +1056,12 @@ class BatchTokenIDOutput(
      # Customized info
      customized_info: Optional[Dict[str, List[Any]]] = None
  
@@ -291,11 +368,12 @@ index 624812186..e40eaff06 100644
 +    spec_training_data_ids: Optional[List[str]] = None
 +    packed_loss_masks: Optional[List[str]] = None
 +    spec_training_mooncake_store_keys: Optional[List[List[str]]] = None
++    spec_training_tensor_shapes: Optional[List[Optional[Dict[str, List[int]]]]] = None
 +
  
  @dataclass
  class BatchMultimodalDecodeReq(BaseBatchReq):
-@@ -1095,6 +1138,11 @@ class BatchStrOutput(
+@@ -1095,6 +1151,12 @@ class BatchStrOutput(
      # Customized info
      customized_info: Optional[Dict[str, List[Any]]] = None
  
@@ -303,12 +381,24 @@ index 624812186..e40eaff06 100644
 +    spec_training_data_ids: Optional[List[str]] = None
 +    packed_loss_masks: Optional[List[str]] = None
 +    spec_training_mooncake_store_keys: Optional[List[List[str]]] = None
++    spec_training_tensor_shapes: Optional[List[Optional[Dict[str, List[int]]]]] = None
 +
  
  @dataclass
  class BatchMultimodalOutput(BaseBatchReq):
+@@ -1269,6 +1330,8 @@ class UpdateWeightFromDiskReqInput(BaseReq):
+     token_step: int = 0
+     # Whether to flush the cache after updating weights
+     flush_cache: bool = True
++    # Whether to update draft model instead of target model (for EAGLE speculative decoding)
++    update_draft_model: bool = False
+ 
+ 
+ @dataclass
 diff --git a/python/sglang/srt/managers/schedule_batch.py b/python/sglang/srt/managers/schedule_batch.py
-index 8f3441b1b..31489b445 100644
+old mode 100644
+new mode 100755
+index 8f3441b1b..dbb427ffd
 --- a/python/sglang/srt/managers/schedule_batch.py
 +++ b/python/sglang/srt/managers/schedule_batch.py
 @@ -46,7 +46,7 @@ from enum import Enum, auto
@@ -328,28 +418,40 @@ index 8f3441b1b..31489b445 100644
  from sglang.srt.utils import flatten_nested_list
  from sglang.srt.utils.cuda_ipc_transport_utils import CudaIpcTensorTransportProxy
  
-@@ -543,6 +544,8 @@ class Req:
+@@ -543,6 +544,9 @@ class Req:
          routing_key: Optional[str] = None,
          dimensions: Optional[int] = None,
          http_worker_ipc: Optional[str] = None,
 +        spec_training_data_id: Optional[str] = None,
 +        packed_loss_mask: Optional[str] = None,
++        mooncake_target: Optional[Dict[str, Any]] = None,
      ):
          # Input and output info
          self.rid = rid
-@@ -583,6 +586,11 @@ class Req:
+@@ -583,6 +587,13 @@ class Req:
          # For multi-http worker
          self.http_worker_ipc = http_worker_ipc
  
 +        # Spec training fields
 +        self.spec_training_data_id = spec_training_data_id
 +        self.packed_loss_mask = packed_loss_mask
++        self.mooncake_target = mooncake_target
 +        self.spec_training_mooncake_store_keys: List[str] = []
++        self.spec_training_tensor_shapes: Optional[Dict[str, List[int]]] = None
 +
          # Require reasoning for the request (hybrid reasoning model only)
          self.require_reasoning = require_reasoning
  
-@@ -1364,6 +1372,9 @@ class ScheduleBatch(ScheduleBatchDisaggregationDecodeMixin):
+@@ -753,6 +764,8 @@ class Req:
+         # The number of verification forward passes in the speculative decoding.
+         # This is used to compute the average acceptance length per request.
+         self.spec_verify_ct = 0
++        self._spec_decode_hs_chunks = []
++        self._spec_decode_lhs_chunks = []  # For last_hidden_states in spec training
+ 
+         # The number of accepted tokens in speculative decoding for this request.
+         # This is used to compute the acceptance rate and average acceptance length per request.
+@@ -1364,6 +1377,9 @@ class ScheduleBatch(ScheduleBatchDisaggregationDecodeMixin):
      # Metrics
      dp_cooperation_info: Optional[DPCooperationInfo] = None
  
@@ -359,7 +461,7 @@ index 8f3441b1b..31489b445 100644
      @classmethod
      def init_new(
          cls,
-@@ -1384,6 +1395,15 @@ class ScheduleBatch(ScheduleBatchDisaggregationDecodeMixin):
+@@ -1384,6 +1400,15 @@ class ScheduleBatch(ScheduleBatchDisaggregationDecodeMixin):
          if isinstance(token_to_kv_pool_allocator, SWATokenToKVPoolAllocator):
              is_hybrid_swa = True
  
@@ -375,7 +477,7 @@ index 8f3441b1b..31489b445 100644
          return cls(
              reqs=reqs,
              req_to_token_pool=req_to_token_pool,
-@@ -1403,6 +1423,9 @@ class ScheduleBatch(ScheduleBatchDisaggregationDecodeMixin):
+@@ -1403,6 +1428,9 @@ class ScheduleBatch(ScheduleBatchDisaggregationDecodeMixin):
              chunked_req=chunked_req,
              dllm_staging_reqs=dllm_staging_reqs,
              dllm_config=dllm_config,
@@ -385,7 +487,7 @@ index 8f3441b1b..31489b445 100644
          )
  
      def batch_size(self):
-@@ -2130,6 +2153,16 @@ class ScheduleBatch(ScheduleBatchDisaggregationDecodeMixin):
+@@ -2130,6 +2158,16 @@ class ScheduleBatch(ScheduleBatchDisaggregationDecodeMixin):
                  has_been_filtered=has_been_filtered,
              )
  
@@ -402,7 +504,7 @@ index 8f3441b1b..31489b445 100644
      def merge_batch(self, other: "ScheduleBatch"):
          # NOTE: in spec v2 mode, we do not need wait verify here because
          # 1) current batch is always prefill, whose seq_lens is not a future
-@@ -2178,6 +2211,20 @@ class ScheduleBatch(ScheduleBatchDisaggregationDecodeMixin):
+@@ -2178,6 +2216,23 @@ class ScheduleBatch(ScheduleBatchDisaggregationDecodeMixin):
          if self.spec_info:
              self.spec_info.merge_batch(other.spec_info)
  
@@ -413,8 +515,11 @@ index 8f3441b1b..31489b445 100644
 +                self.spec_training_info.data_ids.update(
 +                    other.spec_training_info.data_ids
 +                )
-+                self.spec_training_info.packed_loss_masks.update(
-+                    other.spec_training_info.packed_loss_masks
++                self.spec_training_info.prompt_lengths.update(
++                    other.spec_training_info.prompt_lengths
++                )
++                self.spec_training_info.response_lengths.update(
++                    other.spec_training_info.response_lengths
 +                )
 +                self.spec_training_info.mooncake_store_keys.update(
 +                    other.spec_training_info.mooncake_store_keys
@@ -423,7 +528,7 @@ index 8f3441b1b..31489b445 100644
      def get_model_worker_batch(
          self, seq_lens_cpu_cache: Optional[torch.Tensor] = None
      ) -> ModelWorkerBatch:
-@@ -2234,7 +2281,7 @@ class ScheduleBatch(ScheduleBatchDisaggregationDecodeMixin):
+@@ -2234,7 +2289,7 @@ class ScheduleBatch(ScheduleBatchDisaggregationDecodeMixin):
              hicache_consumer_index=self.hicache_consumer_index,
              capture_hidden_mode=(
                  CaptureHiddenMode.FULL
@@ -432,7 +537,7 @@ index 8f3441b1b..31489b445 100644
                  else (
                      getattr(
                          self.spec_info, "capture_hidden_mode", CaptureHiddenMode.NULL
-@@ -2253,6 +2300,7 @@ class ScheduleBatch(ScheduleBatchDisaggregationDecodeMixin):
+@@ -2253,6 +2308,7 @@ class ScheduleBatch(ScheduleBatchDisaggregationDecodeMixin):
              mamba_track_indices=self.mamba_track_indices,
              mamba_track_mask=self.mamba_track_mask,
              mamba_track_seqlens=self.mamba_track_seqlens,
@@ -440,7 +545,7 @@ index 8f3441b1b..31489b445 100644
          )
  
      def copy(self):
-@@ -2278,6 +2326,7 @@ class ScheduleBatch(ScheduleBatchDisaggregationDecodeMixin):
+@@ -2278,6 +2334,7 @@ class ScheduleBatch(ScheduleBatchDisaggregationDecodeMixin):
              mamba_track_mask=self.mamba_track_mask,
              mamba_track_seqlens=self.mamba_track_seqlens,
              dp_cooperation_info=self.dp_cooperation_info,
@@ -448,7 +553,7 @@ index 8f3441b1b..31489b445 100644
          )
  
      def maybe_evict_swa(self):
-@@ -2431,3 +2480,6 @@ class ModelWorkerBatch:
+@@ -2431,3 +2488,6 @@ class ModelWorkerBatch:
      mamba_track_indices: Optional[torch.Tensor] = None  # shape: [b], int64
      mamba_track_mask: Optional[torch.Tensor] = None  # shape: [b], bool
      mamba_track_seqlens: Optional[torch.Tensor] = None  # shape: [b], int64
@@ -456,113 +561,121 @@ index 8f3441b1b..31489b445 100644
 +    # For spec training
 +    has_spec_training: bool = False
 diff --git a/python/sglang/srt/managers/scheduler.py b/python/sglang/srt/managers/scheduler.py
-index e818deaa4..ca2c70e34 100644
+old mode 100644
+new mode 100755
+index e818deaa4..70e5afc98
 --- a/python/sglang/srt/managers/scheduler.py
 +++ b/python/sglang/srt/managers/scheduler.py
-@@ -346,6 +346,26 @@ class Scheduler(
-         # Init moe config and GEMM config (FP8 GEMM, etc.)
-         self.init_moe_gemm_config()
- 
-+        # Start mooncake store init in background (overlaps with model loading)
-+        self._mooncake_init_thread = None
-+        self._mooncake_init_error = None
-+        self.eagle_mooncake_store = None
-+        if self.server_args.enable_spec_training_mooncake and self.attn_tp_rank == 0:
-+            import threading
-+
-+            mooncake_device = torch.device(f"cuda:{self.gpu_id}")
-+
-+            def _init_mooncake():
-+                try:
-+                    self.init_eagle_mooncake_store(device=mooncake_device)
-+                except Exception as e:
-+                    self._mooncake_init_error = e
-+
-+            self._mooncake_init_thread = threading.Thread(
-+                target=_init_mooncake, daemon=True
-+            )
-+            self._mooncake_init_thread.start()
-+
-         # Launch a model worker and draft model worker if using speculative decoding
-         self.init_model_worker()
- 
-@@ -394,6 +414,12 @@ class Scheduler(
+@@ -394,6 +394,13 @@ class Scheduler(
          # Init the grammar backend for constrained generation
          self.grammar_manager = GrammarManager(self)
  
-+        # Wait for background mooncake store init to complete
-+        if self._mooncake_init_thread is not None:
-+            self._mooncake_init_thread.join()
-+            if self._mooncake_init_error is not None:
-+                raise self._mooncake_init_error
++        # Always define Mooncake-related attributes so spec-training code can
++        # safely access them regardless of feature flags or TP rank.
++        self.eagle_mooncake_store = None
++        self._eagle_mooncake_stores = {}
++        self._decode_hs_storage = {}
++        self._decode_lhs_storage = {}
 +
          self.is_initializing = False
  
      def init_model_config(self):
-@@ -727,6 +753,25 @@ class Scheduler(
+@@ -727,6 +734,60 @@ class Scheduler(
          self.forward_sleep_time = None
          self._engine_paused = False
  
-+    def init_eagle_mooncake_store(self, device=None):
-+        if self.server_args.enable_spec_training_mooncake:
-+            try:
-+                from torchspec.transfer.mooncake import (
-+                    EagleMooncakeStore,
-+                    MooncakeConfig,
-+                )
++    def _get_eagle_mooncake_store_key(self, mooncake_target):
++        if mooncake_target is None:
++            return "__env__"
++        if isinstance(mooncake_target, dict):
++            return tuple(sorted(mooncake_target.items()))
++        return str(mooncake_target)
 +
-+                config = MooncakeConfig.from_env()
-+                store = EagleMooncakeStore(config)
-+                store.setup(device=device or self.device)
-+                store.warmup_rdma()
-+                self.eagle_mooncake_store = store
-+                logger.info("EagleMooncakeStore initialized for spec training")
-+            except ImportError:
-+                logger.warning(
-+                    "torchspec.mooncake not found. Spec training mooncake store disabled."
++    def init_eagle_mooncake_store(self, mooncake_target=None):
++        if not self.server_args.enable_spec_training_mooncake or self.tp_rank != 0:
++            return None
++
++        key = self._get_eagle_mooncake_store_key(mooncake_target)
++        if key in self._eagle_mooncake_stores:
++            self.eagle_mooncake_store = self._eagle_mooncake_stores[key]
++            return self.eagle_mooncake_store
++
++        try:
++            from torchspec.config.mooncake_config import MooncakeConfig
++            from torchspec.transfer.mooncake import EagleMooncakeStore
++
++            config = MooncakeConfig.from_env()
++            if mooncake_target:
++                config.local_hostname = mooncake_target.get(
++                    "local_hostname", config.local_hostname
 +                )
++                config.master_server_address = mooncake_target.get(
++                    "master_server_address", config.master_server_address
++                )
++                config.metadata_server = mooncake_target.get(
++                    "metadata_server", config.metadata_server
++                )
++                config.global_segment_size = mooncake_target.get(
++                    "global_segment_size", config.global_segment_size
++                )
++                config.local_buffer_size = mooncake_target.get(
++                    "local_buffer_size", config.local_buffer_size
++                )
++                config.host_buffer_size = mooncake_target.get(
++                    "host_buffer_size", config.host_buffer_size
++                )
++                config.protocol = mooncake_target.get("protocol", config.protocol)
++                config.device_name = mooncake_target.get("device_name", config.device_name)
++                if hasattr(config, "enable_gpu_direct"):
++                    config.enable_gpu_direct = mooncake_target.get(
++                        "enable_gpu_direct", getattr(config, "enable_gpu_direct", False)
++                    )
++                if hasattr(config, "async_put_pool_size"):
++                    config.async_put_pool_size = mooncake_target.get(
++                        "async_put_pool_size", getattr(config, "async_put_pool_size", None)
++                    )
++                if hasattr(config, "kv_lease_ttl_s"):
++                    config.kv_lease_ttl_s = mooncake_target.get(
++                        "kv_lease_ttl_s", getattr(config, "kv_lease_ttl_s", 5.0)
++                    )
++
++            store = EagleMooncakeStore(config)
++            store.setup(device=self.device)
++            self._eagle_mooncake_stores[key] = store
++            self.eagle_mooncake_store = store
++            logger.info(
++                f"EagleMooncakeStore initialized for spec training target={config.master_server_address}"
++            )
++            return store
++        except ImportError:
++            logger.warning(
++                "torchspec.mooncake not found. Spec training mooncake store disabled."
++            )
++            return None
++
++    def get_eagle_mooncake_store(self, req):
++        if req.spec_training_data_id is None:
++            return None
++        return self.init_eagle_mooncake_store(req.mooncake_target)
 +
      def init_chunked_prefill(self):
          # Init chunked prefill
          self.chunked_prefill_size = self.server_args.chunked_prefill_size
-@@ -1468,6 +1513,8 @@ class Scheduler(
+@@ -1468,6 +1529,9 @@ class Scheduler(
                  routing_key=recv_req.routing_key,
                  http_worker_ipc=recv_req.http_worker_ipc,
                  dllm_config=self.dllm_config,
 +                spec_training_data_id=recv_req.spec_training_data_id,
 +                packed_loss_mask=recv_req.packed_loss_mask,
++                mooncake_target=recv_req.mooncake_target,
              )
              req.tokenizer = self.tokenizer
  
-@@ -2276,7 +2323,10 @@ class Scheduler(
-                     batch_result.copy_done = self.device_module.Event()
-                     if batch_result.delay_sample_func is None:
-                         self.future_map.store_to_map(future_indices, batch_result)
--                        batch_result.copy_to_cpu(return_logprob=batch.return_logprob)
-+                        batch_result.copy_to_cpu(
-+                            return_logprob=batch.return_logprob,
-+                            skip_hidden_states=batch.spec_training_info is not None,
-+                        )
-                     else:
-                         batch_result.future_indices = future_indices
- 
-@@ -2385,7 +2435,10 @@ class Scheduler(
-             _batch_result = batch_result.delay_sample_func()
-             assert _batch_result is batch_result
-             self.future_map.store_to_map(batch_result.future_indices, batch_result)
--            batch_result.copy_to_cpu(return_logprob=self.cur_batch.return_logprob)
-+            batch_result.copy_to_cpu(
-+                return_logprob=self.cur_batch.return_logprob,
-+                skip_hidden_states=self.cur_batch.spec_training_info is not None,
-+            )
- 
-     def process_batch_result(
-         self,
 diff --git a/python/sglang/srt/managers/scheduler_output_processor_mixin.py b/python/sglang/srt/managers/scheduler_output_processor_mixin.py
-index d79f929d3..3eebfacb5 100644
+index d79f929d3..e40a1dee3 100644
 --- a/python/sglang/srt/managers/scheduler_output_processor_mixin.py
 +++ b/python/sglang/srt/managers/scheduler_output_processor_mixin.py
-@@ -180,21 +180,22 @@ class SchedulerOutputProcessorMixin:
+@@ -180,21 +180,27 @@ class SchedulerOutputProcessorMixin:
                              )
                          logprob_pt += num_input_logprobs
  
@@ -584,22 +697,96 @@ index d79f929d3..3eebfacb5 100644
 +                        logits_output.hidden_states is not None
 +                        and (
 +                            req.return_hidden_states
-+                            or (
-+                                req.spec_training_data_id is not None
-+                                and self.attn_tp_rank == 0
-+                            )
-                         )
++                            or req.spec_training_data_id is not None
++                        )
 +                    )
 +                    if should_process_hidden_states:
-+                        self._process_hidden_states_for_req(
-+                            req, batch, logits_output, hidden_state_offset,
-+                            copy_done_event=result.copy_done,
++                        extend_input_len = (
++                            extend_input_len_per_req[i]
++                            if extend_input_len_per_req is not None
++                            else len(req.origin_input_ids)
 +                        )
-+                        hidden_state_offset += len(req.origin_input_ids)
++                        self._process_hidden_states_for_req(
++                            req,
++                            batch,
++                            logits_output,
++                            hidden_state_offset,
++                            extend_input_len,
+                         )
++                        hidden_state_offset += extend_input_len
  
                      if req.grammar is not None:
                          # FIXME: this try-except block is for handling unexpected xgrammar issue.
-@@ -843,6 +844,71 @@ class SchedulerOutputProcessorMixin:
+@@ -426,6 +432,53 @@ class SchedulerOutputProcessorMixin:
+         if (timeout_ms := envs.SGLANG_FORWARD_TIMEOUT_MS.get()) > 0:
+             deadline = time.perf_counter() - timeout_ms / 1000.0
+ 
++        if hasattr(self, "_decode_hs_storage") and self.tp_rank == 0:
++            if not batch.spec_algorithm.is_none():
++                # Speculative decoding: hidden states were captured per-request in verify()
++                for req in batch.reqs:
++                    if (
++                        hasattr(req, "_spec_decode_hs_chunks")
++                        and req._spec_decode_hs_chunks
++                    ):
++                        if req.rid in self._decode_hs_storage:
++                            self._decode_hs_storage[req.rid].extend(
++                                req._spec_decode_hs_chunks
++                            )
++                            req._spec_decode_hs_chunks.clear()
++                    # Also collect last_hidden_states for spec training
++                    if (
++                        hasattr(req, "_spec_decode_lhs_chunks")
++                        and req._spec_decode_lhs_chunks
++                    ):
++                        if req.rid in self._decode_lhs_storage:
++                            self._decode_lhs_storage[req.rid].extend(
++                                req._spec_decode_lhs_chunks
++                            )
++                            req._spec_decode_lhs_chunks.clear()
++            elif logits_output.hidden_states is not None:
++                for i, req in enumerate(batch.reqs):
++                    if req.rid in self._decode_hs_storage:
++                        if logits_output.hidden_states.dim() == 2:
++                            hs = logits_output.hidden_states[i : i + 1].clone()
++                        else:
++                            hs = logits_output.hidden_states[i].unsqueeze(0).clone()
++                        self._decode_hs_storage[req.rid].append(hs)
++                        if (
++                            logits_output.last_hidden_states is not None
++                            and req.rid in self._decode_lhs_storage
++                        ):
++                            if logits_output.last_hidden_states.dim() == 2:
++                                lhs = logits_output.last_hidden_states[
++                                    i : i + 1
++                                ].clone()
++                            else:
++                                lhs = (
++                                    logits_output.last_hidden_states[i]
++                                    .unsqueeze(0)
++                                    .clone()
++                                )
++                            self._decode_lhs_storage[req.rid].append(lhs)
++
+         # Check finish condition
+         for i, (req, next_token_id) in enumerate(zip(batch.reqs, next_token_ids)):
+             req: Req
+@@ -456,6 +509,14 @@ class SchedulerOutputProcessorMixin:
+             req.check_finished(new_accepted_len)
+ 
+             if req.finished():
++                # Store accumulated hidden states to Mooncake before cleanup (TP0 only)
++                if (
++                    hasattr(self, "_decode_hs_storage")
++                    and self.tp_rank == 0
++                    and req.rid in self._decode_hs_storage
++                ):
++                    self._flush_decode_hs_to_mooncake(req, batch)
++
+                 self.maybe_collect_routed_experts(req)
+ 
+                 if self.server_args.disaggregation_decode_enable_offload_kvcache:
+@@ -843,6 +904,175 @@ class SchedulerOutputProcessorMixin:
          if req.input_token_ids_logprobs_idx is None:
              req.input_token_ids_logprobs_idx = []
  
@@ -609,26 +796,43 @@ index d79f929d3..3eebfacb5 100644
 +        batch: ScheduleBatch,
 +        logits_output: LogitsProcessorOutput,
 +        hidden_state_offset: int,
-+        copy_done_event=None,
++        hidden_state_seq_len: int,
 +    ):
-+        """Process hidden states during prefill for spec training or return_hidden_states."""
-+        seq_len = len(req.origin_input_ids)
++        """Process hidden states during prefill.
++
++        For spec training requests with Mooncake: accumulate on GPU (don't store yet).
++        Storage happens when the request finishes (after decode completes).
++        """
++        seq_len = hidden_state_seq_len
 +        req_hidden_states = logits_output.hidden_states[
 +            hidden_state_offset : hidden_state_offset + seq_len
 +        ]
 +
++        mooncake_store = self.get_eagle_mooncake_store(req)
 +        if (
 +            batch.spec_training_info is not None
 +            and batch.spec_training_info.has_request(req.rid)
-+            and self.eagle_mooncake_store is not None
++            and mooncake_store is not None
 +        ):
-+            self._send_hidden_states_to_mooncake(
-+                req, batch, req_hidden_states, logits_output, hidden_state_offset,
-+                copy_done_event=copy_done_event,
-+            )
++            if req.sampling_params.max_new_tokens > 0:
++                # Decode mode: accumulate on GPU for later Mooncake storage
++                # (flushed when request finishes in process_batch_result_decode)
++                if req.rid not in self._decode_hs_storage:
++                    self._decode_hs_storage[req.rid] = []
++                    self._decode_lhs_storage[req.rid] = []
++                self._decode_hs_storage[req.rid].append(req_hidden_states.clone())
++                if logits_output.last_hidden_states is not None:
++                    lhs = logits_output.last_hidden_states[
++                        hidden_state_offset : hidden_state_offset + seq_len
++                    ]
++                    self._decode_lhs_storage[req.rid].append(lhs.clone())
++            else:
++                # Prefill-only mode: send directly to Mooncake (no decode step follows)
++                self._send_hidden_states_to_mooncake(
++                    req, batch, req_hidden_states, logits_output, hidden_state_offset
++                )
 +        else:
-+            pass
-+            # req.hidden_states.append(req_hidden_states.cpu().clone().tolist())
++            req.hidden_states.append(req_hidden_states.cpu().clone().tolist())
 +
 +    def _send_hidden_states_to_mooncake(
 +        self: Scheduler,
@@ -637,8 +841,8 @@ index d79f929d3..3eebfacb5 100644
 +        hidden_states: torch.Tensor,
 +        logits_output: LogitsProcessorOutput,
 +        hidden_state_offset: int,
-+        copy_done_event=None,
 +    ):
++        # TODO(ywang): Do not send input_ids and loss_mask. Training can reconstruct them.
 +        import uuid
 +
 +        data_id = batch.spec_training_info.data_ids.get(req.rid, req.rid)
@@ -655,10 +859,13 @@ index d79f929d3..3eebfacb5 100644
 +                hidden_state_offset : hidden_state_offset + seq_len
 +            ]
 +
-+        if hidden_states.is_cuda and copy_done_event is not None:
-+            torch.cuda.current_stream().wait_event(copy_done_event)
++        mooncake_store = self.get_eagle_mooncake_store(req)
++        if mooncake_store is None:
++            raise RuntimeError(
++                f"Spec training request {req.rid} missing Mooncake target or store initialization failed."
++            )
 +
-+        self.eagle_mooncake_store.put(
++        shapes = mooncake_store.put(
 +            key=key,
 +            hidden_states=hidden_states,
 +            input_ids=input_ids,
@@ -666,56 +873,129 @@ index d79f929d3..3eebfacb5 100644
 +        )
 +
 +        req.spec_training_mooncake_store_keys.append(key)
++        req.spec_training_tensor_shapes = {
++            name: list(shape) for name, shape in shapes.items()
++        }
 +        batch.spec_training_info.mooncake_store_keys[data_id].append(key)
++
++    def _flush_decode_hs_to_mooncake(
++        self: Scheduler,
++        req: Req,
++        batch: ScheduleBatch,
++    ):
++        """Concatenate accumulated hidden states and store to Mooncake.
++
++        Called when a spec training request finishes after full decode.
++        Stores hidden states for the entire prompt+output sequence.
++        """
++        import uuid as uuid_mod
++
++        chunks = self._decode_hs_storage.pop(req.rid, [])
++        lhs_chunks = self._decode_lhs_storage.pop(req.rid, [])
++
++        if not chunks:
++            return
++
++        all_hidden_states = torch.cat(chunks, dim=0)
++        del chunks
++
++        all_last_hidden_states = None
++        if lhs_chunks:
++            all_last_hidden_states = torch.cat(lhs_chunks, dim=0)
++            del lhs_chunks
++
++        # Build input_ids for the full sequence (prompt + output)
++        full_ids = list(req.origin_input_ids) + list(req.output_ids)
++        seq_len = all_hidden_states.shape[0]
++        full_ids = full_ids[:seq_len]
++        input_ids = torch.tensor(
++            full_ids, dtype=torch.long, device=all_hidden_states.device
++        )
++
++        # Get data_id
++        data_id = req.rid
++        if (
++            batch.spec_training_info is not None
++            and batch.spec_training_info.has_request(req.rid)
++        ):
++            data_id = batch.spec_training_info.data_ids.get(req.rid, req.rid)
++
++        key = f"{data_id}_{uuid_mod.uuid4().hex[:8]}"
++
++        # For decoding sometimes we miss the last token hidden states
++        all_hidden_states = all_hidden_states[
++            : len(req.origin_input_ids) + len(req.output_ids) - 1
++        ]
++        all_last_hidden_states = all_last_hidden_states[
++            : len(req.origin_input_ids) + len(req.output_ids) - 1
++        ]
++        input_ids = input_ids[: len(req.origin_input_ids) + len(req.output_ids) - 1]
++        logger.debug(
++            f"[DECODE_HS] Storing to Mooncake: key={key}, "
++            f"hs={tuple(all_hidden_states.shape)}, ids={tuple(input_ids.shape)}, "
++            f"lhs={tuple(all_last_hidden_states.shape) if all_last_hidden_states is not None else None}, "
++            f"prompt={len(req.origin_input_ids)}, output={len(req.output_ids)}"
++        )
++        mooncake_store = self.get_eagle_mooncake_store(req)
++        if mooncake_store is None:
++            raise RuntimeError(
++                f"Spec training request {req.rid} missing Mooncake target or store initialization failed."
++            )
++
++        shapes = mooncake_store.put(
++            key=key,
++            hidden_states=all_hidden_states,
++            input_ids=input_ids,
++            last_hidden_states=all_last_hidden_states,
++        )
++
++        req.spec_training_mooncake_store_keys.append(key)
++        req.spec_training_tensor_shapes = {
++            name: list(shape) for name, shape in shapes.items()
++        }
++        if (
++            batch.spec_training_info is not None
++            and data_id in batch.spec_training_info.mooncake_store_keys
++        ):
++            batch.spec_training_info.mooncake_store_keys[data_id].append(key)
 +
      def stream_output(
          self: Scheduler,
          reqs: List[Req],
-@@ -901,6 +967,18 @@ class SchedulerOutputProcessorMixin:
+@@ -901,6 +1131,11 @@ class SchedulerOutputProcessorMixin:
          routed_experts = None
          customized_info = {}
  
-+        if self.attn_tp_rank == 0 and self.eagle_mooncake_store is not None:
-+            self.eagle_mooncake_store.flush()
-+
-+        if self.attn_tp_rank == 0:
-+            spec_training_data_ids = []
-+            packed_loss_masks = []
-+            spec_training_mooncake_store_keys = []
-+        else:
-+            spec_training_data_ids = None
-+            packed_loss_masks = None
-+            spec_training_mooncake_store_keys = None
++        spec_training_data_ids = []
++        packed_loss_masks = []
++        spec_training_mooncake_store_keys = []
++        spec_training_tensor_shapes = []
 +
          queue_times = []
          forward_entry_times = []
          prefill_launch_delays = []
-@@ -1022,6 +1100,13 @@ class SchedulerOutputProcessorMixin:
+@@ -1022,6 +1257,13 @@ class SchedulerOutputProcessorMixin:
                      spec_verify_ct.append(req.spec_verify_ct)
                      spec_accepted_tokens.append(req.spec_accepted_tokens)
  
-+                if spec_training_data_ids is not None:
-+                    spec_training_data_ids.append(req.spec_training_data_id)
-+                    packed_loss_masks.append(req.packed_loss_mask)
-+                    spec_training_mooncake_store_keys.append(
-+                        req.spec_training_mooncake_store_keys
-+                    )
++                spec_training_data_ids.append(req.spec_training_data_id)
++                packed_loss_masks.append(req.packed_loss_mask)
++                spec_training_mooncake_store_keys.append(
++                    req.spec_training_mooncake_store_keys
++                )
++                spec_training_tensor_shapes.append(req.spec_training_tensor_shapes)
 +
                  if return_logprob:
                      if (
                          req.return_logprob
-@@ -1091,9 +1176,15 @@ class SchedulerOutputProcessorMixin:
+@@ -1091,9 +1333,11 @@ class SchedulerOutputProcessorMixin:
                          output_token_ids_logprobs_idx.append([])
  
                  if req.return_hidden_states:
 -                    if output_hidden_states is None:
 -                        output_hidden_states = []
 -                    output_hidden_states.append(req.hidden_states)
-+                    uses_mooncake = (
-+                        self.attn_tp_rank == 0
-+                        and req.spec_training_data_id is not None
-+                        and self.eagle_mooncake_store is not None
-+                    )
++                    uses_mooncake = req.spec_training_data_id is not None
 +                    if not uses_mooncake:
 +                        if output_hidden_states is None:
 +                            output_hidden_states = []
@@ -723,7 +1003,7 @@ index d79f929d3..3eebfacb5 100644
                  if req.return_routed_experts:
                      if routed_experts is None:
                          routed_experts = []
-@@ -1158,6 +1249,15 @@ class SchedulerOutputProcessorMixin:
+@@ -1158,6 +1402,20 @@ class SchedulerOutputProcessorMixin:
                      placeholder_tokens_val=None,
                      retraction_counts=retraction_counts,
                      load=load,
@@ -736,23 +1016,71 @@ index d79f929d3..3eebfacb5 100644
 +                        if spec_training_mooncake_store_keys
 +                        else None
 +                    ),
++                    spec_training_tensor_shapes=(
++                        spec_training_tensor_shapes
++                        if spec_training_tensor_shapes
++                        else None
++                    ),
                  )
              )
  
+diff --git a/python/sglang/srt/managers/scheduler_update_weights_mixin.py b/python/sglang/srt/managers/scheduler_update_weights_mixin.py
+old mode 100644
+new mode 100755
+index 293a84350..6f34eb665
+--- a/python/sglang/srt/managers/scheduler_update_weights_mixin.py
++++ b/python/sglang/srt/managers/scheduler_update_weights_mixin.py
+@@ -13,6 +13,7 @@ from sglang.srt.constants import (
+     GPU_MEMORY_TYPE_WEIGHTS,
+ )
+ from sglang.srt.managers.io_struct import (
++    AbortReq,
+     CheckWeightsReqInput,
+     CheckWeightsReqOutput,
+     DestroyWeightsUpdateGroupReqInput,
+@@ -47,7 +48,24 @@ class SchedulerUpdateWeightsMixin:
+         self: Scheduler, recv_req: UpdateWeightFromDiskReqInput
+     ):
+         """In-place update of the weights from disk."""
+-        success, message = self.tp_worker.update_weights_from_disk(recv_req)
++        if recv_req.abort_all_requests:
++            logger.info("Aborting all waiting requests before weight update")
++            self.abort_request(AbortReq(rid="", abort_all=True))
++
++        # Check if we should update draft model instead of target model
++        if recv_req.update_draft_model:
++            if not hasattr(self, "draft_worker") or self.draft_worker is None:
++                success = False
++                message = "No draft worker available. Server is not running speculative decoding."
++                logger.error(message)
++                return UpdateWeightFromDiskReqOutput(success, message, 0)
++
++            logger.info(f"Updating draft model weights from {recv_req.model_path}")
++            success, message = self.draft_worker.update_weights_from_disk(recv_req)
++        else:
++            logger.info(f"Updating target model weights from {recv_req.model_path}")
++            success, message = self.tp_worker.update_weights_from_disk(recv_req)
++
+         if success:
+             if recv_req.flush_cache:
+                 flush_cache_success = self.flush_cache()
 diff --git a/python/sglang/srt/managers/tokenizer_manager.py b/python/sglang/srt/managers/tokenizer_manager.py
-index 69806de1d..411752d0b 100644
+old mode 100644
+new mode 100755
+index 69806de1d..8f313dd72
 --- a/python/sglang/srt/managers/tokenizer_manager.py
 +++ b/python/sglang/srt/managers/tokenizer_manager.py
-@@ -945,6 +945,8 @@ class TokenizerManager(TokenizerCommunicatorMixin, TokenizerManagerMultiItemMixi
+@@ -945,6 +945,9 @@ class TokenizerManager(TokenizerCommunicatorMixin, TokenizerManagerMultiItemMixi
                  routing_key=obj.routing_key,
                  need_wait_for_image=obj.need_wait_for_image,
                  num_items_assigned=obj.num_items_assigned,
 +                spec_training_data_id=obj.spec_training_data_id,
 +                packed_loss_mask=obj.packed_loss_mask,
++                mooncake_target=obj.mooncake_target,
              )
          elif isinstance(obj, EmbeddingReqInput):
              tokenized_obj = TokenizedEmbeddingReqInput(
-@@ -1595,6 +1597,20 @@ class TokenizerManager(TokenizerCommunicatorMixin, TokenizerManagerMultiItemMixi
+@@ -1595,6 +1598,23 @@ class TokenizerManager(TokenizerCommunicatorMixin, TokenizerManagerMultiItemMixi
                  if self.enable_metrics:
                      self._calculate_timing_metrics(meta_info, state, recv_obj, i)
  
@@ -766,49 +1094,77 @@ index 69806de1d..411752d0b 100644
 +                        recv_obj.spec_training_data_ids[i]
 +                    )
 +                    meta_info["packed_loss_mask"] = recv_obj.packed_loss_masks[i]
-+                    meta_info["spec_training_mooncake_store_keys"] = (
-+                        recv_obj.spec_training_mooncake_store_keys[i]
-+                    )
++                    store_keys = recv_obj.spec_training_mooncake_store_keys[i]
++                    tensor_shapes = None
++                    if recv_obj.spec_training_tensor_shapes is not None:
++                        tensor_shapes = recv_obj.spec_training_tensor_shapes[i]
++                    if store_keys and tensor_shapes is None:
++                        logger.error(
++                            "spec training response missing tensor shapes: "
++                            "rid=%s data_id=%s keys=%s packed_loss_mask=%s",
++                            rid,
++                            recv_obj.spec_training_data_ids[i],
++                            store_keys,
++                            recv_obj.packed_loss_masks[i],
++                        )
++                        raise RuntimeError(
++                            "spec training response missing tensor shapes"
++                        )
++                    meta_info["spec_training_mooncake_store_keys"] = store_keys
++                    meta_info["spec_training_tensor_shapes"] = tensor_shapes
 +
                  trace_req_finish(
                      rid,
                      ts=int(state.finished_time * 1e9),
 diff --git a/python/sglang/srt/managers/utils.py b/python/sglang/srt/managers/utils.py
-index 9eea302b7..66f5cab33 100644
+index 9eea302b7..7629381b5 100644
 --- a/python/sglang/srt/managers/utils.py
 +++ b/python/sglang/srt/managers/utils.py
-@@ -49,7 +49,7 @@ class GenerationBatchResult:
-     # metrics
-     expert_distribution_metrics: Optional[ExpertDistributionMetrics] = None
- 
--    def copy_to_cpu(self, return_logprob: bool):
-+    def copy_to_cpu(self, return_logprob: bool, skip_hidden_states: bool = False):
-         """Copy tensors to CPU in overlap scheduling.
-         Only the tensors which are needed for processing results are copied,
-         e.g., next_token_ids, logits outputs
-@@ -63,7 +63,8 @@ class GenerationBatchResult:
-                 self.logits_output.input_token_logprobs = (
-                     self.logits_output.input_token_logprobs.to("cpu", non_blocking=True)
-                 )
--        if self.logits_output.hidden_states is not None:
-+        # When overlap is enabled, hidden_states stay on GPU for _copy_stream DtoH in put().
-+        if self.logits_output.hidden_states is not None and not skip_hidden_states:
+@@ -67,6 +67,10 @@ class GenerationBatchResult:
              self.logits_output.hidden_states = self.logits_output.hidden_states.to(
                  "cpu", non_blocking=True
              )
++        if self.logits_output.last_hidden_states is not None:
++            self.logits_output.last_hidden_states = (
++                self.logits_output.last_hidden_states.to("cpu", non_blocking=True)
++            )
+         self.next_token_ids = self.next_token_ids.to("cpu", non_blocking=True)
+ 
+         if self.accept_lens is not None:
+diff --git a/python/sglang/srt/model_executor/cuda_graph_runner.py b/python/sglang/srt/model_executor/cuda_graph_runner.py
+old mode 100644
+new mode 100755
+index b0b2ede6d..3d15d2b67
+--- a/python/sglang/srt/model_executor/cuda_graph_runner.py
++++ b/python/sglang/srt/model_executor/cuda_graph_runner.py
+@@ -878,6 +878,11 @@ class CudaGraphRunner:
+                     if output.hidden_states is not None
+                     else None
+                 ),
++                last_hidden_states=(
++                    output.last_hidden_states[: self.raw_num_token]
++                    if output.last_hidden_states is not None
++                    else None
++                ),
+                 customized_info=output.customized_info,
+             )
+         else:
 diff --git a/python/sglang/srt/model_executor/forward_batch_info.py b/python/sglang/srt/model_executor/forward_batch_info.py
-index bcd1fda10..80f42f386 100644
+old mode 100644
+new mode 100755
+index bcd1fda10..8b921d214
 --- a/python/sglang/srt/model_executor/forward_batch_info.py
 +++ b/python/sglang/srt/model_executor/forward_batch_info.py
-@@ -270,7 +270,6 @@ class ForwardBatch(ForwardBatchDeepSeekMHAMixin):
+@@ -270,6 +270,8 @@ class ForwardBatch(ForwardBatchDeepSeekMHAMixin):
      return_logprob: bool = False
      top_logprobs_nums: Optional[List[int]] = None
      token_ids_logprobs: Optional[List[List[int]]] = None
--
++    # Return full logits for all tokens during prefill (instead of just last token)
++    return_full_logits: bool = False
+ 
      # For logits and logprobs post processing
      next_token_logits_buffer: torch.Tensor = None
-     temp_scaled_logprobs: bool = False
-@@ -375,6 +374,9 @@ class ForwardBatch(ForwardBatchDeepSeekMHAMixin):
+@@ -375,6 +377,9 @@ class ForwardBatch(ForwardBatchDeepSeekMHAMixin):
      # For hidden states before normal
      return_hidden_states_before_norm: bool = False
  
@@ -818,7 +1174,7 @@ index bcd1fda10..80f42f386 100644
      @classmethod
      def init_new(
          cls,
-@@ -419,6 +421,7 @@ class ForwardBatch(ForwardBatchDeepSeekMHAMixin):
+@@ -419,6 +424,7 @@ class ForwardBatch(ForwardBatchDeepSeekMHAMixin):
              tbo_split_seq_index=batch.tbo_split_seq_index,
              dimensions=batch.dimensions,
              return_hidden_states_before_norm=batch.return_hidden_states_before_norm,
@@ -827,7 +1183,9 @@ index bcd1fda10..80f42f386 100644
          device = model_runner.device
  
 diff --git a/python/sglang/srt/model_executor/model_runner.py b/python/sglang/srt/model_executor/model_runner.py
-index 01d6c8866..d0ff3eb8d 100644
+old mode 100644
+new mode 100755
+index 01d6c8866..d0ff3eb8d
 --- a/python/sglang/srt/model_executor/model_runner.py
 +++ b/python/sglang/srt/model_executor/model_runner.py
 @@ -323,6 +323,7 @@ class ModelRunner(ModelRunnerKVCacheMixin):
@@ -875,16 +1233,17 @@ index 01d6c8866..d0ff3eb8d 100644
          # Sample the next tokens
          next_token_ids = self.sampler(
 diff --git a/python/sglang/srt/models/kimi_k25.py b/python/sglang/srt/models/kimi_k25.py
-index 048ef0578..294bd5438 100644
+old mode 100644
+new mode 100755
+index 048ef0578..0f8fe34e5
 --- a/python/sglang/srt/models/kimi_k25.py
 +++ b/python/sglang/srt/models/kimi_k25.py
-@@ -740,5 +740,19 @@ class KimiK25ForConditionalGeneration(nn.Module):
+@@ -740,5 +740,18 @@ class KimiK25ForConditionalGeneration(nn.Module):
          if language_weights:
              self.language_model.load_weights(language_weights)
  
 +    def set_eagle3_layers_to_capture(self, layer_ids: Optional[List[int]] = None):
 +        self.capture_aux_hidden_states = True
-+        self.language_model.capture_aux_hidden_states = True
 +        self.language_model.model.capture_aux_hidden_states = True
 +        if layer_ids is None:
 +            num_layers = self.config.text_config.num_hidden_layers
@@ -899,7 +1258,9 @@ index 048ef0578..294bd5438 100644
  
  EntryClass = [KimiK25ForConditionalGeneration]
 diff --git a/python/sglang/srt/models/qwen3_next.py b/python/sglang/srt/models/qwen3_next.py
-index 9e96797c0..2d2a2cadb 100644
+old mode 100644
+new mode 100755
+index 9e96797c0..2d2a2cadb
 --- a/python/sglang/srt/models/qwen3_next.py
 +++ b/python/sglang/srt/models/qwen3_next.py
 @@ -1,6 +1,6 @@
@@ -1025,7 +1386,9 @@ index 9e96797c0..2d2a2cadb 100644
  
                  if "mtp" not in name:
 diff --git a/python/sglang/srt/models/qwen3_next_mtp.py b/python/sglang/srt/models/qwen3_next_mtp.py
-index aa0f8ec1e..2f8521c6a 100644
+old mode 100644
+new mode 100755
+index aa0f8ec1e..2f8521c6a
 --- a/python/sglang/srt/models/qwen3_next_mtp.py
 +++ b/python/sglang/srt/models/qwen3_next_mtp.py
 @@ -72,6 +72,9 @@ class Qwen3NextForCausalLMMTP(Qwen3NextForCausalLM):
@@ -1039,7 +1402,9 @@ index aa0f8ec1e..2f8521c6a 100644
      def forward(
          self,
 diff --git a/python/sglang/srt/server_args.py b/python/sglang/srt/server_args.py
-index 1c7074715..0cc83b842 100644
+old mode 100644
+new mode 100755
+index 1c7074715..0cc83b842
 --- a/python/sglang/srt/server_args.py
 +++ b/python/sglang/srt/server_args.py
 @@ -483,6 +483,10 @@ class ServerArgs:
@@ -1077,12 +1442,195 @@ index 1c7074715..0cc83b842 100644
          # Expert parallelism
          parser.add_argument(
              "--expert-parallel-size",
+diff --git a/python/sglang/srt/speculative/eagle_info.py b/python/sglang/srt/speculative/eagle_info.py
+old mode 100644
+new mode 100755
+index e22eeaee4..1f07955fe
+--- a/python/sglang/srt/speculative/eagle_info.py
++++ b/python/sglang/srt/speculative/eagle_info.py
+@@ -429,6 +429,20 @@ class EagleVerifyInput(SpecInput, EagleVerifyInputV2Mixin):
+             req.spec_accepted_tokens += (
+                 sum(1 for idx in accept_index_row if idx != -1) - 1
+             )
++            # Capture accepted hidden states per-request for spec training
++            if (
++                batch.spec_info.hidden_states is not None
++                and batch.spec_training_info is not None
++                and batch.spec_training_info.has_request(req.rid)
++            ):
++                req_accepted = [idx for idx in accept_index_row if idx != -1]
++                if req_accepted:
++                    hs = batch.spec_info.hidden_states[req_accepted].clone()
++                    req._spec_decode_hs_chunks.append(hs)
++                    # Also capture last_hidden_states for spec training
++                    if batch.spec_info.last_hidden_states is not None:
++                        lhs = batch.spec_info.last_hidden_states[req_accepted].clone()
++                        req._spec_decode_lhs_chunks.append(lhs)
+ 
+         if has_finished:
+             accept_length = (accept_index != -1).sum(dim=1) - 1
+@@ -660,6 +674,13 @@ class EagleDraftInput(SpecInput, EagleDraftInputV2Mixin):
+             return
+ 
+         # Prefill only generate 1 token.
++        if len(self.verified_id) != len(batch.seq_lens):
++            logger.error(
++                f"prepare_for_extend mismatch: verified_id={self.verified_id.shape}, "
++                f"seq_lens={batch.seq_lens.shape}, forward_mode={batch.forward_mode}, "
++                f"spec_training_info={batch.spec_training_info is not None}, "
++                f"return_hidden_states={batch.return_hidden_states}"
++            )
+         assert len(self.verified_id) == len(batch.seq_lens)
+ 
+         pt = 0
+diff --git a/python/sglang/srt/speculative/eagle_worker.py b/python/sglang/srt/speculative/eagle_worker.py
+old mode 100644
+new mode 100755
+index 0086e2aa7..ceaf1795c
+--- a/python/sglang/srt/speculative/eagle_worker.py
++++ b/python/sglang/srt/speculative/eagle_worker.py
+@@ -362,6 +362,7 @@ class EAGLEWorker(TpModelWorker):
+         # We need the full hidden states to prefill the KV cache of the draft model.
+         model_worker_batch = batch.get_model_worker_batch()
+         model_worker_batch.capture_hidden_mode = CaptureHiddenMode.FULL
++        model_worker_batch.has_spec_training = False  # Need proper sampling for EAGLE
+         batch_result = self.target_worker.forward_batch_generation(model_worker_batch)
+         logits_output, next_token_ids = (
+             batch_result.logits_output,
+@@ -538,10 +539,14 @@ class EAGLEWorker(TpModelWorker):
+ 
+         # Get forward batch
+         model_worker_batch = batch.get_model_worker_batch()
+-        assert model_worker_batch.capture_hidden_mode == CaptureHiddenMode.LAST
++        # Override capture_hidden_mode for EAGLE draft (spec_training_info forces FULL)
++        model_worker_batch.capture_hidden_mode = CaptureHiddenMode.LAST
+         forward_batch = ForwardBatch.init_new(
+             model_worker_batch, self.draft_model_runner
+         )
++        # Draft model always needs logits for draft token selection, even when
++        # doing spec training data collection. Don't skip logits computation.
++        forward_batch.has_spec_training = False
+         can_cuda_graph = self.cuda_graph_runner and self.cuda_graph_runner.can_run(
+             forward_batch
+         )
+@@ -695,7 +700,13 @@ class EAGLEWorker(TpModelWorker):
+         model_worker_batch = batch.get_model_worker_batch(
+             seq_lens_cpu_cache=spec_info.seq_lens_cpu
+         )
+-        assert model_worker_batch.capture_hidden_mode == spec_info.capture_hidden_mode
++
++        if batch.spec_training_info is not None:
++            model_worker_batch.capture_hidden_mode = CaptureHiddenMode.FULL
++        else:
++            assert (
++                model_worker_batch.capture_hidden_mode == spec_info.capture_hidden_mode
++            )
+ 
+         if batch.has_grammar:
+             retrieve_next_token_cpu = spec_info.retrive_next_token.cpu()
+@@ -737,6 +748,7 @@ class EAGLEWorker(TpModelWorker):
+             detect_nan(logits_output)
+ 
+         spec_info.hidden_states = logits_output.hidden_states
++        spec_info.last_hidden_states = logits_output.last_hidden_states
+         res: EagleVerifyOutput = spec_info.verify(
+             batch,
+             logits_output,
+@@ -751,6 +763,11 @@ class EAGLEWorker(TpModelWorker):
+             res.accepted_indices
+         ]
+         logits_output.hidden_states = logits_output.hidden_states[res.accepted_indices]
++        # Also prune last_hidden_states for spec training
++        if logits_output.last_hidden_states is not None:
++            logits_output.last_hidden_states = logits_output.last_hidden_states[
++                res.accepted_indices
++            ]
+ 
+         if (
+             self.target_worker.model_runner.hybrid_gdn_config is not None
+@@ -876,10 +893,13 @@ class EAGLEWorker(TpModelWorker):
+         model_worker_batch = batch.get_model_worker_batch(
+             seq_lens_cpu_cache=seq_lens_cpu
+         )
++
++        model_worker_batch.capture_hidden_mode = CaptureHiddenMode.LAST
+         forward_batch = ForwardBatch.init_new(
+             model_worker_batch, self.draft_model_runner
+         )
+         forward_batch.return_logprob = False
++        forward_batch.has_spec_training = False
+         logits_output = self.draft_model_runner.forward(forward_batch).logits_output
+         if self.enable_nan_detection:
+             detect_nan(logits_output)
+@@ -929,10 +949,14 @@ class EAGLEWorker(TpModelWorker):
+ 
+         batch.return_hidden_states = False
+         model_worker_batch = batch.get_model_worker_batch()
+-        assert model_worker_batch.capture_hidden_mode == CaptureHiddenMode.LAST
++        # Override capture_hidden_mode for EAGLE draft (spec_training_info forces FULL)
++        model_worker_batch.capture_hidden_mode = CaptureHiddenMode.LAST
+         forward_batch = ForwardBatch.init_new(
+             model_worker_batch, self.draft_model_runner
+         )
++        # Draft model always needs logits for draft token selection, even when
++        # doing spec training data collection. Don't skip logits computation.
++        forward_batch.has_spec_training = False
+         if forward_batch.seq_lens_cpu is not None:
+             forward_batch.seq_lens_sum = forward_batch.seq_lens_cpu.sum().item()
+         else:
+@@ -1002,6 +1026,46 @@ class EAGLEWorker(TpModelWorker):
+         )
+         return success, message
+ 
++    def update_weights_from_disk(self, recv_req):
++        """Override to update hot_token_id after weight loading.
++
++        When updating draft model weights, the model's hot_token_id is updated
++        from the new checkpoint's d2t/t2d mappings, but the EAGLE worker's
++        self.hot_token_id is not updated, causing token mapping mismatches.
++
++        This fix updates the EAGLE worker's hot_token_id after loading weights
++        and invalidates CUDA graphs that cached the old tensor reference.
++        """
++        logger.info(f"Updating draft model weights from {recv_req.model_path}")
++        success, message = super().update_weights_from_disk(recv_req)
++
++        if not success:
++            logger.error(f"Failed to update draft model weights: {message}")
++            return success, message
++
++        # Update hot_token_id from the newly loaded model
++        if self.draft_model_runner.model.hot_token_id is not None:
++            logger.info("Updating hot_token_id from newly loaded draft model")
++            self.hot_token_id = self.draft_model_runner.model.hot_token_id.to(
++                self.device
++            )
++        else:
++            logger.info("No hot_token_id in the new draft model")
++            self.hot_token_id = None
++
++        logger.info(
++            "Recapturing CUDA graphs with new hot_token_id (this may take a few minutes)"
++        )
++        with self.draft_tp_context(
++            self.draft_model_runner.tp_group
++        ), speculative_moe_backend_context(), speculative_moe_a2a_backend_context():
++            self.init_cuda_graphs()
++
++        logger.info(
++            "Successfully updated draft model weights, hot_token_id, and recaptured CUDA graphs"
++        )
++        return success, message
++
+ 
+ @torch.compile(dynamic=True, disable=_is_npu)
+ def get_last_loc_large_page_size_top_k_1(
 diff --git a/python/sglang/srt/speculative/spec_training_info.py b/python/sglang/srt/speculative/spec_training_info.py
-new file mode 100644
-index 000000000..24af14b7a
+new file mode 100755
+index 000000000..b71332bfa
 --- /dev/null
 +++ b/python/sglang/srt/speculative/spec_training_info.py
-@@ -0,0 +1,50 @@
+@@ -0,0 +1,56 @@
 +from dataclasses import dataclass, field
 +from typing import Dict, List, Optional
 +
@@ -1095,11 +1643,15 @@ index 000000000..24af14b7a
 +    - data_ids: rid -> data_id mapping
 +    - packed_loss_masks: data_id -> packed_loss_mask string
 +    - mooncake_store_keys: data_id -> list of keys
++    - prompt_lengths: rid -> prompt length
++    - response_lengths: rid -> response length
 +    """
 +
 +    data_ids: Dict[str, str] = field(default_factory=dict)
 +    packed_loss_masks: Dict[str, str] = field(default_factory=dict)
 +    mooncake_store_keys: Dict[str, List[str]] = field(default_factory=dict)
++    prompt_lengths: Dict[str, int] = field(default_factory=dict)
++    response_lengths: Dict[str, int] = field(default_factory=dict)
 +
 +    def add_request(
 +        self,
@@ -1123,6 +1675,8 @@ index 000000000..24af14b7a
 +
 +    def remove_request(self, rid: str):
 +        data_id = self.data_ids.pop(rid, None)
++        self.prompt_lengths.pop(rid, None)
++        self.response_lengths.pop(rid, None)
 +        if data_id is not None:
 +            remaining_rids_with_data_id = [
 +                r for r, d in self.data_ids.items() if d == data_id
@@ -1133,3 +1687,33 @@ index 000000000..24af14b7a
 +
 +    def is_empty(self) -> bool:
 +        return len(self.data_ids) == 0
+diff --git a/sgl-model-gateway/tests/fixtures/images/grayscale.jpg b/sgl-model-gateway/tests/fixtures/images/grayscale.jpg
+old mode 100644
+new mode 100755
+diff --git a/sgl-model-gateway/tests/fixtures/images/large.jpg b/sgl-model-gateway/tests/fixtures/images/large.jpg
+old mode 100644
+new mode 100755
+diff --git a/sgl-model-gateway/tests/fixtures/images/odd_dims.jpg b/sgl-model-gateway/tests/fixtures/images/odd_dims.jpg
+old mode 100644
+new mode 100755
+diff --git a/sgl-model-gateway/tests/fixtures/images/small.jpg b/sgl-model-gateway/tests/fixtures/images/small.jpg
+old mode 100644
+new mode 100755
+diff --git a/sgl-model-gateway/tests/fixtures/images/square.jpg b/sgl-model-gateway/tests/fixtures/images/square.jpg
+old mode 100644
+new mode 100755
+diff --git a/sgl-model-gateway/tests/fixtures/images/tall.jpg b/sgl-model-gateway/tests/fixtures/images/tall.jpg
+old mode 100644
+new mode 100755
+diff --git a/sgl-model-gateway/tests/fixtures/images/tiny.jpg b/sgl-model-gateway/tests/fixtures/images/tiny.jpg
+old mode 100644
+new mode 100755
+diff --git a/sgl-model-gateway/tests/fixtures/images/very_tall.jpg b/sgl-model-gateway/tests/fixtures/images/very_tall.jpg
+old mode 100644
+new mode 100755
+diff --git a/sgl-model-gateway/tests/fixtures/images/very_wide.jpg b/sgl-model-gateway/tests/fixtures/images/very_wide.jpg
+old mode 100644
+new mode 100755
+diff --git a/sgl-model-gateway/tests/fixtures/images/wide.jpg b/sgl-model-gateway/tests/fixtures/images/wide.jpg
+old mode 100644
+new mode 100755
