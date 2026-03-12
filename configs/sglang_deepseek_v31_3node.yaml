@@ -1,0 +1,82 @@
+# DeepSeek-V3.1 remote SGLang + Mooncake feature-cache training.
+#
+# This config is for the decoupled architecture:
+#   - training runs in TorchSpec
+#   - target-model prefill features come from a remote SGLang service
+#   - feature handles are materialized through Mooncake and cached locally
+#
+# Usage:
+#   bash examples/deepseek-v31-3node-h100/run.sh
+
+model:
+  target_model_path: /nfs/ofs-llm-ssd/models/opensource/DeepSeek-V3.1
+  trust_remote_code: true
+
+dataset:
+  train_data_path: ???  # set to your dataset path (HF hub id, local dir, or jsonl)
+  chat_template: deepseek-v3
+  prompt_key: conversations
+  defer_tokenization: false
+
+training:
+  max_seq_length: 16384
+  seed: 42
+  micro_batch_size: 1
+  num_epochs: 3
+  save_interval: 5000
+  learning_rate: 5e-5
+  warmup_ratio: 0.015
+  max_grad_norm: 1
+  ttt_length: 4
+  draft_accumulation_steps: 1
+  training_num_nodes: 1
+  training_num_gpus_per_node: 8
+  attention_backend: flex_attention
+  max_concurrent_batches: 1
+  gradient_checkpointing: true
+  distributed_timeout_minutes: 30
+
+inference:
+  mode: remote_sglang
+  remote_sglang:
+    endpoint: http://127.0.0.1:30000
+    timeout_seconds: 60.0
+    max_retries: 2
+    feature_schema_version: eagle3.v1
+
+feature_cache:
+  enabled: true
+  index_path: ./cache/remote_deepseek_v31_feature_cache.sqlite3
+  delete_after_read: false
+  stale_on_missing: true
+
+mooncake:
+  master_server_address: null
+  metadata_server: null
+  metadata_port: null
+  protocol: tcp # Change this to RDMA for good performance.
+  local_hostname: null
+  enable_gpu_direct: false
+  max_seq_len: 16384
+  hidden_dim: 7168
+  global_segment_size: 128GB
+  local_buffer_size: 16GB
+  # device_name: mlx5_0,mlx5_1 # Please change this to correct network devices.
+
+output_dir: ./outputs/remote_deepseek_v31
+cache_dir: ./cache/remote_deepseek_v31
+model_download_dir: null
+
+debug:
+  save_debug_train_data: null
+  debug_train_only: false
+  debug_inference_only: false
+
+logging:
+  report_to: none
+  wandb_key: null
+  wandb_project: train_deepseek_v31
+  wandb_team: null
+  wandb_group: null
+  wandb_mode: online
+  wandb_random_suffix: true

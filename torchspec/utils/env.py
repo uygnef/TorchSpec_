@@ -32,6 +32,8 @@ _RAY_NOSET_VISIBLE_DEVICES_KEYS = [
     "RAY_EXPERIMENTAL_NOSET_ONEAPI_DEVICE_SELECTOR",
 ]
 
+_SKIP_RUNTIME_ENV_VAR = "TORCHSPEC_RAY_SKIP_RUNTIME_ENV"
+
 
 def get_torchspec_env_vars() -> dict[str, str]:
     """Return common environment variables for all Ray actors.
@@ -47,3 +49,17 @@ def get_torchspec_env_vars() -> dict[str, str]:
     env = {k: "1" for k in _RAY_NOSET_VISIBLE_DEVICES_KEYS}
     env.update({k: os.environ[k] for k in _TORCHSPEC_ENV_KEYS if k in os.environ})
     return env
+
+
+def get_torchspec_runtime_env(env_vars: dict[str, str] | None = None) -> dict[str, dict[str, str]] | None:
+    """Return a Ray runtime_env payload unless local Ray fallback disabled it.
+
+    When TorchSpec falls back to starting a local Ray instance, we prefer letting
+    workers inherit process environment directly instead of depending on
+    Ray's runtime env agent, which can be unstable on some environments.
+    """
+    if os.environ.get(_SKIP_RUNTIME_ENV_VAR) == "1":
+        return None
+    if env_vars is None:
+        env_vars = get_torchspec_env_vars()
+    return {"env_vars": env_vars}

@@ -45,3 +45,35 @@ CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 ./examples/qwen3-8b-single-node/run.sh \
     training.training_num_gpus_per_node=4 \
     inference.inference_num_gpus=4
 ```
+
+## Remote-SGLang Smoke
+
+If you want to test the new remote-SGLang feature path first, use:
+
+Service machine:
+
+```bash
+bash examples/qwen3-8b-single-node/launch_remote_sglang_server.sh
+```
+
+In Luban job environments, the server port defaults to `LUBAN_AVAILABLE_PORT_1` when present.
+The launcher also enables `--enable-return-hidden-states`, which is required by TorchSpec remote feature extraction.
+The distributed rendezvous address is auto-selected and printed as `Dist init addr`; you can override it with `DIST_INIT_ADDR` or `DIST_PORT`.
+
+Training machine:
+
+```bash
+REMOTE_SGLANG_ENDPOINT=http://<sglang_host>:30000 \
+bash examples/qwen3-8b-single-node/run_remote_smoke.sh
+```
+
+If you want to skip the config-only precheck:
+
+```bash
+CHECK_CONFIG=false \
+REMOTE_SGLANG_ENDPOINT=http://<sglang_host>:30000 \
+bash examples/qwen3-8b-single-node/run_remote_smoke.sh
+```
+
+In job environments that expose `DISTRIBUTED_MASTER_HOSTS`, the script will use that hostname for Mooncake by default. If you want to force DNS resolution to a concrete IP, add `RESOLVE_MASTER_IP=true`.
+By default the smoke script does not pin Mooncake ports; it lets TorchSpec auto-pick free ports unless you explicitly pass `MOONCAKE_MASTER_ADDRESS` or `MOONCAKE_METADATA_PORT`.

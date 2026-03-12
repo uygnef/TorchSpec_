@@ -21,6 +21,7 @@
 import os
 from dataclasses import dataclass
 from typing import Tuple
+from urllib.parse import urlparse
 
 from torchspec.transfer.mooncake.helpers import calculate_eagle3_buffer_size
 
@@ -124,6 +125,12 @@ class MooncakeConfig:
             master_host = master_server_address.split(":")[0]
             port = metadata_port if metadata_port is not None else 8090
             metadata_server = f"http://{master_host}:{port}/metadata"
+        elif metadata_server is not None:
+            metadata_server = cls._normalize_metadata_server(
+                metadata_server,
+                metadata_port=metadata_port,
+                master_server_address=master_server_address,
+            )
 
         local_hostname = getattr(args, "mooncake_local_hostname", None)
         if local_hostname is None or local_hostname == "localhost":
@@ -158,6 +165,31 @@ class MooncakeConfig:
             kwargs["metadata_server"] = metadata_server
 
         return cls(**kwargs)
+
+    @staticmethod
+    def _normalize_metadata_server(
+        metadata_server: str,
+        *,
+        metadata_port: int | None,
+        master_server_address: str | None,
+    ) -> str:
+        parsed = urlparse(metadata_server)
+        if parsed.scheme and parsed.netloc:
+            return metadata_server
+
+        host = metadata_server
+        if "://" in metadata_server and parsed.hostname:
+            host = parsed.hostname
+
+        if ":" in host and not host.startswith("["):
+            return f"http://{host}/metadata"
+
+        port = metadata_port
+        if port is None and master_server_address is not None:
+            port = 8090
+        if port is None:
+            port = 8090
+        return f"http://{host}:{port}/metadata"
 
     def export_env(self) -> None:
         """Export mooncake configuration as environment variables.

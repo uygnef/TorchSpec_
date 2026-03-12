@@ -392,6 +392,9 @@ class AsyncTrainingController:
         Raises:
             RuntimeError: If the inference manager has reported a fatal error.
         """
+        if getattr(self.args, "inference_mode", "local") == "remote_sglang":
+            return self._try_dispatch_remote_batch()
+
         if self._inference_error is not None:
             raise RuntimeError(f"Inference engine failed: {self._inference_error}")
 
@@ -430,6 +433,36 @@ class AsyncTrainingController:
         self.batch_id += 1
         return True
 
+    def _try_dispatch_remote_batch(self) -> bool:
+        with self._prompt_lock:
+            prompt_count = len(self.prompt_buffer)
+            now = time.time()
+            should_log = (now - self._last_dispatch_log_time) >= 2.0
+            if prompt_count < self.dispatch_batch_size:
+                if should_log:
+                    self._last_dispatch_log_time = now
+                    logger.debug(
+                        "try_dispatch_batch(remote): prompt_count=%s < dispatch_batch_size=%s",
+                        prompt_count,
+                        self.dispatch_batch_size,
+                    )
+                return False
+
+            if should_log:
+                self._last_dispatch_log_time = now
+                logger.debug(
+                    "try_dispatch_batch(remote): prompt_count=%s >= dispatch_batch_size=%s",
+                    prompt_count,
+                    self.dispatch_batch_size,
+                )
+
+            batch_prompts = [self.prompt_buffer.popleft() for _ in range(self.dispatch_batch_size)]
+
+        self._dispatch_remote_samples_to_queues(batch_prompts, self.train_queues)
+        self._training_monitor.record(self.dispatch_batch_size)
+        self.batch_id += 1
+        return True
+
     def _partition_results(self, results: list[InferenceOutput]) -> list[list[InferenceOutput]]:
         """Partition InferenceOutputs across DP ranks."""
         partitions: list[list[InferenceOutput]] = [[] for _ in range(self.dp_size)]
@@ -454,6 +487,31 @@ class AsyncTrainingController:
                         packed_loss_mask=result.packed_loss_mask,
                     )
                 )
+
+    def _dispatch_remote_samples_to_queues(
+        self,
+        batch_prompts: list[InferenceInput],
+        queues: list[Queue],
+    ) -> None:
+        partitions: list[list[InferenceInput]] = [[] for _ in range(self.dp_size)]
+        for i, prompt in enumerate(batch_prompts):
+            partitions[i % self.dp_size].append(prompt)
+
+        feature_schema_version = getattr(
+            self.args, "remote_sglang_feature_schema_version", "eagle3.v1"
+        )
+        for dp_rank, prompts in enumerate(partitions):
+            for prompt in prompts:
+                sample = {
+                    "sample_key": prompt.data_id,
+                    "input_ids": prompt.input_ids.tolist()
+                    if hasattr(prompt.input_ids, "tolist")
+                    else prompt.input_ids,
+                    "packed_loss_mask": prompt.packed_loss_mask,
+                    "multimodal_inputs": prompt.multimodal_inputs,
+                    "feature_schema_version": feature_schema_version,
+                }
+                queues[dp_rank].put(sample)
 
     def push_inference_sample(self, sample: InferenceOutput) -> int:
         """Add a single inference sample to the training pool.
@@ -521,6 +579,9 @@ class AsyncTrainingController:
 
     def try_dispatch_eval_batch(self) -> bool:
         """Dispatch one eval batch from the pool if enough samples are available."""
+        if getattr(self.args, "inference_mode", "local") == "remote_sglang":
+            return self._try_dispatch_remote_eval_batch()
+
         bs = self.eval_dispatch_batch_size
         with self._eval_pool_lock:
             if len(self.eval_pool) < bs:
@@ -531,6 +592,21 @@ class AsyncTrainingController:
         self._eval_dispatched_samples += bs
         logger.debug(
             f"Eval: dispatched batch ({self._eval_dispatched_samples}/"
+            f"{self._eval_expected_count} samples)"
+        )
+        return True
+
+    def _try_dispatch_remote_eval_batch(self) -> bool:
+        bs = self.eval_dispatch_batch_size
+        with self._prompt_lock:
+            if len(self.prompt_buffer) < bs:
+                return False
+            batch_prompts = [self.prompt_buffer.popleft() for _ in range(bs)]
+
+        self._dispatch_remote_samples_to_queues(batch_prompts, self.eval_queues)
+        self._eval_dispatched_samples += bs
+        logger.debug(
+            f"Eval(remote): dispatched batch ({self._eval_dispatched_samples}/"
             f"{self._eval_expected_count} samples)"
         )
         return True

@@ -27,6 +27,7 @@ from ray.util.placement_group import placement_group
 from ray.util.scheduling_strategies import PlacementGroupSchedulingStrategy
 
 from torchspec.ray.train_group import RayTrainGroup
+from torchspec.utils.env import get_torchspec_env_vars
 from torchspec.utils.logging import logger
 
 
@@ -102,15 +103,51 @@ def _ensure_ray_initialized():
 
     ray_address = os.environ.get("RAY_ADDRESS", "auto")
     try:
+        os.environ.pop("TORCHSPEC_RAY_SKIP_RUNTIME_ENV", None)
         ray.init(address=ray_address, ignore_reinit_error=True)
         logger.info(f"Connected to Ray cluster at {ray_address}")
     except ConnectionError:
         logger.warning("No existing Ray cluster found, starting a local instance")
-        ray.init(ignore_reinit_error=True)
+        os.environ.update(get_torchspec_env_vars())
+        os.environ["TORCHSPEC_RAY_SKIP_RUNTIME_ENV"] = "1"
+        ray.init(ignore_reinit_error=True, **_get_local_ray_init_kwargs())
+
+
+def _find_free_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("", 0))
+        return sock.getsockname()[1]
+
+
+def _get_local_ray_init_kwargs() -> dict:
+    """Allocate explicit local Ray agent ports to avoid stale-port collisions."""
+    os.environ.setdefault("RAY_worker_register_timeout_seconds", "300")
+    os.environ.setdefault("RAY_agent_register_timeout_ms", "300000")
+    kwargs = {
+        "include_dashboard": False,
+        "runtime_env_agent_port": _find_free_port(),
+        "dashboard_agent_listen_port": _find_free_port(),
+        "metrics_agent_port": _find_free_port(),
+        "metrics_export_port": _find_free_port(),
+    }
+    logger.info(
+        "Starting local Ray with explicit agent ports: runtime_env_agent_port=%s, "
+        "dashboard_agent_listen_port=%s, metrics_agent_port=%s, metrics_export_port=%s, "
+        "worker_register_timeout_seconds=%s, agent_register_timeout_ms=%s",
+        kwargs["runtime_env_agent_port"],
+        kwargs["dashboard_agent_listen_port"],
+        kwargs["metrics_agent_port"],
+        kwargs["metrics_export_port"],
+        os.environ["RAY_worker_register_timeout_seconds"],
+        os.environ["RAY_agent_register_timeout_ms"],
+    )
+    return kwargs
 
 
 def _get_expected_gpu_count(args) -> int:
     training_gpus = args.training_num_nodes * args.training_num_gpus_per_node
+    if getattr(args, "inference_mode", "local") == "remote_sglang":
+        return training_gpus
     inference_gpus = getattr(args, "inference_num_gpus", 0)
     if (
         getattr(args, "colocate", False)
@@ -183,6 +220,20 @@ def create_placement_groups(args):
         return {
             "training": (pg, bundle_indices, gpu_ids),
             "inference": (pg, bundle_indices, gpu_ids),
+        }
+
+    if getattr(args, "inference_mode", "local") == "remote_sglang":
+        num_training_gpus = args.training_num_nodes * args.training_num_gpus_per_node
+        logger.info(
+            "Remote SGLang mode: creating training placement group only with %s GPUs...",
+            num_training_gpus,
+        )
+        training_pg, training_bundle_indices, training_gpu_ids = _create_placement_group(
+            num_training_gpus, strategy="PACK", name="training_pg"
+        )
+        return {
+            "training": (training_pg, training_bundle_indices, training_gpu_ids),
+            "inference": (training_pg, [], []),
         }
 
     num_training_gpus = args.training_num_nodes * args.training_num_gpus_per_node

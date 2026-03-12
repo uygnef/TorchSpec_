@@ -32,24 +32,9 @@ import ray
 from omegaconf import OmegaConf
 from ray.util.scheduling_strategies import NodeAffinitySchedulingStrategy
 
-from torchspec import AutoDraftModelConfig
 from torchspec.config.train_config import config_to_flat_args, load_config
 from torchspec.config.utils import generate_draft_model_config
-from torchspec.controller import (
-    AsyncTrainingController,
-    auto_calculate_training_steps,
-    build_mooncake_config,
-    run_training_loop,
-    setup_async_training_with_engines,
-)
-from torchspec.inference import prepare_inference_engines
-from torchspec.ray.placement_group import (
-    allocate_train_group,
-    create_placement_groups,
-)
-from torchspec.training.trainer_actor import TrainerActor
-from torchspec.transfer.mooncake.utils import launch_mooncake_master
-from torchspec.utils.env import get_torchspec_env_vars
+from torchspec.utils.env import get_torchspec_runtime_env
 from torchspec.utils.logging import init_tracking, logger
 
 _Phase = namedtuple("_Phase", ["name", "duration", "is_async", "blocked"])
@@ -178,6 +163,7 @@ def _resolve_batch_size(args):
 
 def _get_draft_model_config(args):
     """Resolve draft model config from args or auto-generate from target model."""
+    from torchspec.models.draft.auto import AutoDraftModelConfig
 
     draft_config_path = getattr(args, "draft_model_config", None)
     if draft_config_path is not None:
@@ -197,11 +183,31 @@ def train_async_no_generation(args):
     with speculative decoding. Uses distributed Ray actors with placement groups.
     Engines store tensors in mooncake and return keys to AsyncInferenceManager.
     """
+    from torchspec.controller import (
+        AsyncTrainingController,
+        auto_calculate_training_steps,
+        build_mooncake_config,
+        run_training_loop,
+        setup_async_training_with_engines,
+    )
+    from torchspec.inference import prepare_inference_engines
+    from torchspec.ray.placement_group import (
+        allocate_train_group,
+        create_placement_groups,
+    )
+    from torchspec.training.trainer_actor import TrainerActor
+    from torchspec.transfer.mooncake.utils import launch_mooncake_master
+
     if (
         getattr(args, "train_with_decode", False)
         and getattr(args, "inference_engine_type", "sgl") != "sgl"
     ):
         raise ValueError("train_with_decode=True requires inference_engine_type=sgl")
+    if getattr(args, "inference_mode", "local") == "remote_sglang":
+        if getattr(args, "defer_tokenization", False):
+            raise ValueError("remote_sglang mode currently requires defer_tokenization=False")
+        if not getattr(args, "remote_sglang_endpoint", None):
+            raise ValueError("remote_sglang.endpoint must be set when inference.mode=remote_sglang")
 
     init_tracking(args)
     timer = _InitTimer()
@@ -210,7 +216,7 @@ def train_async_no_generation(args):
     with timer.phase("Create controller"):
         driver_node_id = ray.get_runtime_context().get_node_id()
         controller = AsyncTrainingController.options(
-            runtime_env={"env_vars": get_torchspec_env_vars()},
+            runtime_env=get_torchspec_runtime_env(),
             scheduling_strategy=NodeAffinitySchedulingStrategy(node_id=driver_node_id, soft=False),
         ).remote(args, args.dp_size)
 
@@ -276,9 +282,12 @@ def train_async_no_generation(args):
         # dispatched after to maximize parallelism with the wait below.
         _maybe_create_scratch_draft(args, train_group)
 
-        inference_engines, engine_init_refs = prepare_inference_engines(
-            args, pgs["inference"], mooncake_config
-        )
+        if getattr(args, "inference_mode", "local") == "remote_sglang":
+            inference_engines, engine_init_refs = [], []
+        else:
+            inference_engines, engine_init_refs = prepare_inference_engines(
+                args, pgs["inference"], mooncake_config
+            )
 
     # [8] Wait for all actor init to complete concurrently
     n_train = len(train_init_refs)
