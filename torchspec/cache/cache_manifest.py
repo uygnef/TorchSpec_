@@ -1,10 +1,12 @@
+import fcntl
 import json
 import os
+import random
 import sqlite3
 import threading
 import time
 from dataclasses import dataclass
-from typing import Optional
+from typing import Callable, Optional, TypeVar
 
 
 @dataclass(frozen=True)
@@ -16,6 +18,8 @@ class FeatureHandle:
     feature_schema_version: str
     created_at: float
     expires_at: float | None = None
+    prefix_sample_key: str | None = None
+    cached_tokens: int = 0
 
 
 @dataclass(frozen=True)
@@ -29,6 +33,8 @@ class FeatureIndexEntry:
     last_access_at: float
     expires_at: float | None = None
     status: str = "ready"
+    prefix_sample_key: str | None = None
+    cached_tokens: int = 0
 
     def to_handle(self) -> FeatureHandle:
         return FeatureHandle(
@@ -39,6 +45,8 @@ class FeatureIndexEntry:
             feature_schema_version=self.feature_schema_version,
             created_at=self.created_at,
             expires_at=self.expires_at,
+            prefix_sample_key=self.prefix_sample_key,
+            cached_tokens=self.cached_tokens,
         )
 
 
@@ -51,74 +59,128 @@ def _decode_shapes(payload: str) -> dict[str, tuple[int, ...]]:
     return {name: tuple(shape) for name, shape in raw.items()}
 
 
+T = TypeVar("T")
+
+
 class CacheManifest:
     def __init__(self, db_path: str):
         self.db_path = os.path.abspath(db_path)
-        self._lock = threading.Lock()
+        self._init_lock = threading.Lock()
+        self._write_lock = threading.Lock()
+        self._busy_timeout_ms = int(os.environ.get("TORCHSPEC_FEATURE_CACHE_BUSY_TIMEOUT_MS", "30000"))
+        self._write_retry_timeout_s = float(
+            os.environ.get("TORCHSPEC_FEATURE_CACHE_WRITE_RETRY_TIMEOUT_S", "60")
+        )
+        self._touch_interval_s = float(
+            os.environ.get("TORCHSPEC_FEATURE_CACHE_TOUCH_INTERVAL_S", "300")
+        )
         self._init_db()
 
     def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self.db_path)
+        conn = sqlite3.connect(self.db_path, timeout=max(self._busy_timeout_ms / 1000.0, 1.0))
         conn.row_factory = sqlite3.Row
+        conn.execute(f"PRAGMA busy_timeout = {self._busy_timeout_ms}")
         return conn
 
     def _init_db(self) -> None:
         db_dir = os.path.dirname(self.db_path)
         if db_dir:
             os.makedirs(db_dir, exist_ok=True)
-        with self._connect() as conn:
-            conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS feature_manifest (
-                    sample_key TEXT PRIMARY KEY,
-                    mooncake_key TEXT NOT NULL,
-                    tensor_shapes_json TEXT NOT NULL,
-                    tensor_dtypes_json TEXT NOT NULL,
-                    feature_schema_version TEXT NOT NULL,
-                    created_at REAL NOT NULL,
-                    last_access_at REAL NOT NULL,
-                    expires_at REAL,
-                    status TEXT NOT NULL
-                )
-                """
-            )
-            conn.execute(
-                """
-                CREATE INDEX IF NOT EXISTS idx_feature_manifest_last_access
-                ON feature_manifest(last_access_at)
-                """
-            )
+
+        lock_path = self.db_path + ".init.lock"
+        with self._init_lock, open(lock_path, "a+") as lock_file:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+            try:
+                with self._connect() as conn:
+                    conn.execute("PRAGMA journal_mode=WAL")
+                    conn.execute("PRAGMA synchronous=NORMAL")
+                    conn.execute(
+                        """
+                        CREATE TABLE IF NOT EXISTS feature_manifest (
+                            sample_key TEXT PRIMARY KEY,
+                            mooncake_key TEXT NOT NULL,
+                            tensor_shapes_json TEXT NOT NULL,
+                            tensor_dtypes_json TEXT NOT NULL,
+                            feature_schema_version TEXT NOT NULL,
+                            created_at REAL NOT NULL,
+                            last_access_at REAL NOT NULL,
+                            expires_at REAL,
+                            status TEXT NOT NULL,
+                            prefix_sample_key TEXT,
+                            cached_tokens INTEGER NOT NULL DEFAULT 0
+                        )
+                        """
+                    )
+                    columns = {
+                        row["name"]
+                        for row in conn.execute("PRAGMA table_info(feature_manifest)").fetchall()
+                    }
+                    if "prefix_sample_key" not in columns:
+                        conn.execute(
+                            "ALTER TABLE feature_manifest ADD COLUMN prefix_sample_key TEXT"
+                        )
+                    if "cached_tokens" not in columns:
+                        conn.execute(
+                            "ALTER TABLE feature_manifest ADD COLUMN cached_tokens INTEGER NOT NULL DEFAULT 0"
+                        )
+                    conn.execute(
+                        """
+                        CREATE INDEX IF NOT EXISTS idx_feature_manifest_last_access
+                        ON feature_manifest(last_access_at)
+                        """
+                    )
+            finally:
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+
+    def _run_write(self, op: Callable[[sqlite3.Connection], T]) -> T:
+        deadline = time.monotonic() + max(self._write_retry_timeout_s, 0.0)
+        sleep_s = 0.05
+        while True:
+            try:
+                with self._write_lock, self._connect() as conn:
+                    conn.execute("BEGIN IMMEDIATE")
+                    result = op(conn)
+                    conn.commit()
+                    return result
+            except sqlite3.OperationalError as exc:
+                message = str(exc).lower()
+                retryable = "locked" in message or "busy" in message
+                if not retryable or time.monotonic() >= deadline:
+                    raise
+                time.sleep(sleep_s + random.uniform(0.0, min(sleep_s, 0.05)))
+                sleep_s = min(sleep_s * 1.5, 1.0)
 
     def get(self, sample_key: str, *, touch: bool = True) -> Optional[FeatureHandle]:
-        now = time.time()
-        with self._lock, self._connect() as conn:
+        with self._connect() as conn:
             row = conn.execute(
                 """
                 SELECT sample_key, mooncake_key, tensor_shapes_json, tensor_dtypes_json,
-                       feature_schema_version, created_at, last_access_at, expires_at, status
+                       feature_schema_version, created_at, last_access_at, expires_at, status,
+                       prefix_sample_key, cached_tokens
                 FROM feature_manifest
                 WHERE sample_key = ?
                 """,
                 (sample_key,),
             ).fetchone()
-            if row is None:
-                return None
-            if touch:
-                conn.execute(
-                    "UPDATE feature_manifest SET last_access_at = ? WHERE sample_key = ?",
-                    (now, sample_key),
-                )
-            return _row_to_entry(row).to_handle()
+        if row is None:
+            return None
+
+        handle = _row_to_entry(row).to_handle()
+        if touch:
+            self.touch(sample_key, at=time.time())
+        return handle
 
     def upsert(self, handle: FeatureHandle, status: str = "ready") -> None:
         now = time.time()
-        with self._lock, self._connect() as conn:
+
+        def _op(conn: sqlite3.Connection) -> None:
             conn.execute(
                 """
                 INSERT INTO feature_manifest (
                     sample_key, mooncake_key, tensor_shapes_json, tensor_dtypes_json,
-                    feature_schema_version, created_at, last_access_at, expires_at, status
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    feature_schema_version, created_at, last_access_at, expires_at, status,
+                    prefix_sample_key, cached_tokens
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(sample_key) DO UPDATE SET
                     mooncake_key = excluded.mooncake_key,
                     tensor_shapes_json = excluded.tensor_shapes_json,
@@ -127,7 +189,9 @@ class CacheManifest:
                     created_at = excluded.created_at,
                     last_access_at = excluded.last_access_at,
                     expires_at = excluded.expires_at,
-                    status = excluded.status
+                    status = excluded.status,
+                    prefix_sample_key = excluded.prefix_sample_key,
+                    cached_tokens = excluded.cached_tokens
                 """,
                 (
                     handle.sample_key,
@@ -139,19 +203,38 @@ class CacheManifest:
                     now,
                     handle.expires_at,
                     status,
+                    handle.prefix_sample_key,
+                    handle.cached_tokens,
                 ),
             )
 
-    def touch(self, sample_key: str) -> None:
-        with self._lock, self._connect() as conn:
+        self._run_write(_op)
+
+    def touch(self, sample_key: str, *, at: float | None = None) -> None:
+        if self._touch_interval_s < 0:
+            return
+        at = time.time() if at is None else at
+        threshold = at - self._touch_interval_s
+
+        def _op(conn: sqlite3.Connection) -> None:
             conn.execute(
-                "UPDATE feature_manifest SET last_access_at = ? WHERE sample_key = ?",
-                (time.time(), sample_key),
+                """
+                UPDATE feature_manifest
+                SET last_access_at = ?
+                WHERE sample_key = ?
+                  AND (last_access_at IS NULL OR last_access_at < ?)
+                """,
+                (at, sample_key, threshold),
             )
 
+        self._run_write(_op)
+
     def delete(self, sample_key: str) -> None:
-        with self._lock, self._connect() as conn:
-            conn.execute("DELETE FROM feature_manifest WHERE sample_key = ?", (sample_key,))
+        self._run_write(
+            lambda conn: conn.execute(
+                "DELETE FROM feature_manifest WHERE sample_key = ?", (sample_key,)
+            )
+        )
 
 
 def _row_to_entry(row: sqlite3.Row) -> FeatureIndexEntry:
@@ -165,4 +248,6 @@ def _row_to_entry(row: sqlite3.Row) -> FeatureIndexEntry:
         last_access_at=row["last_access_at"],
         expires_at=row["expires_at"],
         status=row["status"],
+        prefix_sample_key=row["prefix_sample_key"],
+        cached_tokens=row["cached_tokens"],
     )

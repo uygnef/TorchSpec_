@@ -33,7 +33,7 @@ from urllib.parse import urlparse
 import ray
 
 from torchspec.ray.ray_actor import RayActor
-from torchspec.utils.env import get_torchspec_env_vars
+from torchspec.utils.env import get_torchspec_runtime_env
 from torchspec.utils.logging import logger
 
 
@@ -61,6 +61,21 @@ def _subprocess_preexec():
     os.setpgrp()
     PR_SET_PDEATHSIG = 1
     ctypes.CDLL("libc.so.6").prctl(PR_SET_PDEATHSIG, signal.SIGTERM)
+
+
+def _normalize_ray_node_ip(host: str) -> str:
+    """Resolve a Mooncake host string to a concrete Ray node IP for node affinity."""
+    if host in {"localhost", "127.0.0.1", "::1"}:
+        resolved = RayActor.get_node_ip()
+        logger.info("Resolved loopback mooncake host %s to Ray node IP %s", host, resolved)
+        return resolved
+    try:
+        resolved = socket.gethostbyname(host)
+    except OSError:
+        return host
+    if resolved != host:
+        logger.info("Resolved mooncake host %s to Ray node IP %s", host, resolved)
+    return resolved
 
 
 class MooncakeMaster(RayActor):
@@ -278,7 +293,9 @@ def launch_mooncake_master(args):
             port = getattr(args, "mooncake_master_port", 50051)
 
     # Pin actor to the user-specified node so the master starts on the right machine.
-    scheduling_strategy = node_affinity_for_ip(host, name="mooncake_master")
+    scheduling_strategy = node_affinity_for_ip(
+        _normalize_ray_node_ip(host), name="mooncake_master"
+    )
 
     http_port = getattr(args, "mooncake_metadata_port", None) or getattr(
         args, "mooncake_http_port", None
@@ -295,9 +312,10 @@ def launch_mooncake_master(args):
         logger.warning(f"Binary not found at {mooncake_bin}, skipping launch")
         return None
 
-    RemoteActor = ray.remote(num_cpus=0, runtime_env={"env_vars": get_torchspec_env_vars()})(
-        MooncakeMaster
-    )
+    RemoteActor = ray.remote(
+        num_cpus=0,
+        runtime_env=get_torchspec_runtime_env(),
+    )(MooncakeMaster)
     actor_options = {"name": "mooncake_master"}
     if scheduling_strategy is not None:
         actor_options["scheduling_strategy"] = scheduling_strategy

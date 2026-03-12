@@ -131,95 +131,67 @@ class EagleMooncakeStore(MooncakeHiddenStateStore):
         """
         self._ensure_initialized()
         logger.debug("put: starting for key=%s", key)
-        keys = [f"{key}_hs", f"{key}_ids"]
-        tensors = [hidden_states, input_ids]
+        entries = [(f"{key}_hs", hidden_states), (f"{key}_ids", input_ids)]
 
         if target is not None:
-            keys.append(f"{key}_tgt")
-            tensors.append(target)
+            entries.append((f"{key}_tgt", target))
 
         if last_hidden_states is not None:
-            keys.append(f"{key}_lhs")
-            tensors.append(last_hidden_states)
+            entries.append((f"{key}_lhs", last_hidden_states))
 
-        if self._gpu_direct_available and self._gpu_send_buffer is not None:
-            buf = self._gpu_send_buffer
-            buffer_ptrs, sizes = self._stage_tensors_into_buffer(buf, tensors)
-            self._do_sync_batch_put(keys, buffer_ptrs, sizes)
-        elif self._host_buffer_pool is None or self._async_put_manager is None:
-            raise RuntimeError(
-                "put() requires either GPU Direct (enable_gpu_direct=True) or "
-                "async host-buffer puts (async_put_pool_size > 0). "
-                "Current config has async_put_pool_size=0 and GPU Direct is "
-                f"{'enabled but gpu_send_buffer failed to initialize' if self._gpu_direct_available else 'disabled'}. "
-                "Set async_put_pool_size >= 1 or enable GPU Direct."
-            )
-        else:
-            buf = self._host_buffer_pool.get_buffer()
-            self._async_put_manager.check_last_error()
-            self._async_put_manager.wait_for_buffer(buf.ptr)
+        non_empty_entries = []
+        total_bytes = 0
+        for tensor_key, tensor in entries:
+            nbytes = tensor.element_size() * tensor.numel()
+            total_bytes += nbytes
+            if nbytes > 0:
+                non_empty_entries.append((tensor_key, tensor, nbytes))
 
-            # Stage DtoH on a dedicated stream so the default (compute) stream
-            # is free to run the next prefill concurrently.
-            compute_event = torch.cuda.Event()
-            compute_event.record()
+        keys = [tensor_key for tensor_key, _, _ in non_empty_entries]
+        sizes = [nbytes for _, _, nbytes in non_empty_entries]
+        buffer_ptrs = []
 
-            with torch.cuda.stream(self._copy_stream):
-                self._copy_stream.wait_event(compute_event)
-                buffer_ptrs, sizes = self._stage_tensors_into_buffer(buf, tensors)
-                copy_done = torch.cuda.Event()
-                copy_done.record()
+        host_buf = None
+        if non_empty_entries:
+            if self._host_buffer_pool is None:
+                # Trainer-side stores may be configured with async_put_pool_size=0.
+                # Fall back to a single synchronous host buffer so local chunk writes
+                # still work when the store is primarily used for get().
+                from torchspec.transfer.mooncake.buffers import HostBufferPool
 
-            for t in tensors:
-                if t.is_cuda:
-                    t.record_stream(self._copy_stream)
+                self._host_buffer_pool = HostBufferPool(
+                    buffer_size=self.config.host_buffer_size,
+                    pool_size=1,
+                )
+                self._host_buffer_pool.initialize()
+                for buf in self._host_buffer_pool._buffers:
+                    self._register_buffer(buf.ptr, buf.size)
+                logger.info(
+                    "Lazily initialized host buffer pool for synchronous put fallback: %.1fMB",
+                    self.config.host_buffer_size / (1024**2),
+                )
+            host_buf = self._host_buffer_pool.get_buffer()
+            offset = 0
+            for _, tensor, nbytes in non_empty_entries:
+                copied = host_buf.copy_from_tensor(tensor, offset=offset)
+                if copied != nbytes:
+                    raise RuntimeError(
+                        f"Unexpected staged byte count for Mooncake key {key}: copied={copied}, expected={nbytes}"
+                    )
+                buffer_ptrs.append(host_buf.ptr + offset)
+                offset += nbytes
 
-            self._async_put_manager.submit(
-                keys,
-                buffer_ptrs,
-                sizes,
-                buf.ptr,
-                wait_event=copy_done,
-                device_index=self._copy_stream.device.index,
-            )
+        def _run_batch_put() -> List[Tuple[str, int, int, int]]:
+            if not keys:
+                return []
+            results = self._store.batch_put_from(keys, buffer_ptrs, sizes)
+            failures: List[Tuple[str, int, int, int]] = []
+            for k, r, ptr, size in zip(keys, results, buffer_ptrs, sizes):
+                if r != 0:
+                    failures.append((k, r, ptr, size))
+            return failures
 
-        shapes = {
-            "hidden_states": tuple(hidden_states.shape),
-            "input_ids": tuple(input_ids.shape),
-        }
-        if target is not None:
-            shapes["target"] = tuple(target.shape)
-        if last_hidden_states is not None:
-            shapes["last_hidden_states"] = tuple(last_hidden_states.shape)
-
-        logger.debug("put: completed key=%s, shapes=%s", key, shapes)
-        return shapes
-
-    def flush(self) -> None:
-        """Block until all in-flight async puts have completed.
-
-        Called before returning mooncake keys to the controller so that
-        consumers can GET immediately.  Because ``put()`` stages DtoH on
-        ``_copy_stream``, the copies are typically finished by the time
-        this is called — the wait is only for the (fast) RDMA transfer.
-        """
-        self._ensure_initialized()
-        if self._async_put_manager is None:
-            return
-        self._async_put_manager.check_last_error()
-        self._async_put_manager.drain()
-        self._async_put_manager.check_last_error()
-
-    def _do_sync_batch_put(
-        self,
-        keys: List[str],
-        buffer_ptrs: List[int],
-        sizes: List[int],
-    ) -> None:
-        """Synchronous batch_put_from with error handling."""
-        total_bytes = sum(sizes)
-        results = self._store.batch_put_from(keys, buffer_ptrs, sizes)
-        failures = [(k, r) for k, r in zip(keys, results) if r != 0]
+        failures = _run_batch_put()
         if failures:
             for k in keys:
                 try:
@@ -229,7 +201,9 @@ class EagleMooncakeStore(MooncakeHiddenStateStore):
                         "Failed to remove partial key %s after batch_put_from failure.",
                         k,
                     )
-            failure_details = ", ".join(f"{k} (code={r})" for k, r in failures)
+            failure_details = ", ".join(
+                f"{k} (code={r}, ptr={ptr}, size={size})" for k, r, ptr, size in failures
+            )
             config_details = (
                 f"total_bytes={_format_bytes(total_bytes)}, "
                 f"global_segment_size={_format_bytes(self.config.global_segment_size)}, "
@@ -241,6 +215,23 @@ class EagleMooncakeStore(MooncakeHiddenStateStore):
                 f"{config_details}. Consider increasing Mooncake segment/buffer sizes "
                 "or reducing batch/sequence length/prefetch depth."
             )
+
+        shapes = {
+            "hidden_states": tuple(hidden_states.shape),
+            "input_ids": tuple(input_ids.shape),
+        }
+        if target is not None:
+            shapes["target"] = tuple(target.shape)
+        if last_hidden_states is not None:
+            shapes["last_hidden_states"] = tuple(last_hidden_states.shape)
+
+        logger.debug(
+            "[MOONCAKE] put: completed key=%s, total_bytes=%s, shapes=%s",
+            key,
+            _format_bytes(total_bytes),
+            shapes,
+        )
+        return shapes
 
     @staticmethod
     def _stage_tensors_into_buffer(buf, tensors: List[torch.Tensor]) -> Tuple[List[int], List[int]]:
@@ -277,39 +268,58 @@ class EagleMooncakeStore(MooncakeHiddenStateStore):
 
         from torchspec.models.target.eagle3_target_model import Eagle3TargetOutput
 
-        keys = [f"{key}_hs", f"{key}_ids"]
         tensor_specs = [
             (
                 "hidden_states",
                 shapes["hidden_states"],
                 dtypes.get("hidden_states", torch.bfloat16),
+                f"{key}_hs",
             ),
-            ("input_ids", shapes["input_ids"], torch.int64),
+            ("input_ids", shapes["input_ids"], torch.int64, f"{key}_ids"),
         ]
 
         if "target" in shapes:
-            keys.append(f"{key}_tgt")
-            tensor_specs.append(("target", shapes["target"], dtypes.get("target", torch.bfloat16)))
+            tensor_specs.append(
+                ("target", shapes["target"], dtypes.get("target", torch.bfloat16), f"{key}_tgt")
+            )
 
         if "last_hidden_states" in shapes:
-            keys.append(f"{key}_lhs")
             tensor_specs.append(
                 (
                     "last_hidden_states",
                     shapes["last_hidden_states"],
                     dtypes.get("hidden_states", torch.bfloat16),
+                    f"{key}_lhs",
                 )
             )
 
-        tensor_map = None
-        if self._gpu_direct_available and self._gpu_receive_buffer is not None:
-            tensor_map = self._get_tensors_gpu_direct(keys, tensor_specs, device)
-            if tensor_map is None:
-                logger.warning("GPUDirect batch_get_into failed; falling back to host buffer path.")
+        fetch_keys = []
+        fetch_specs = []
+        zero_specs = []
+        for name, shape, dtype, tensor_key in tensor_specs:
+            if self._compute_tensor_size(shape, dtype) == 0:
+                zero_specs.append((name, shape, dtype))
+            else:
+                fetch_keys.append(tensor_key)
+                fetch_specs.append((name, shape, dtype))
 
-        if tensor_map is None:
-            tensor_map = self._get_tensors_via_host_buffer(keys, tensor_specs, device)
-            logger.debug("Using host buffer path (TCP)")
+        tensor_map = {}
+        if fetch_keys:
+            tensor_map = None
+            if self._gpu_direct_available and self._gpu_receive_buffer is not None:
+                tensor_map = self._get_tensors_gpu_direct(fetch_keys, fetch_specs, device)
+                if tensor_map is None:
+                    logger.warning("GPUDirect batch_get_into failed; falling back to host buffer path.")
+
+            if tensor_map is None:
+                tensor_map = self._get_tensors_via_host_buffer(fetch_keys, fetch_specs, device)
+                logger.debug("Using host buffer path (TCP)")
+
+        for name, shape, dtype in zero_specs:
+            tensor_map[name] = torch.empty(shape, dtype=dtype, device=device)
+            if name == "input_ids":
+                tensor_map["input_ids_cpu"] = torch.empty(shape, dtype=dtype, device="cpu")
+
         logger.debug("Retrieved Eagle3 tensors with base key: %s", key)
 
         return Eagle3TargetOutput(

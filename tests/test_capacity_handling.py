@@ -115,6 +115,8 @@ class MockControllerArgs:
 
     per_dp_rank_batch_size: int = 4
     max_sample_pool_size: int = 0
+    inference_mode: str = "local"
+    remote_sglang_feature_schema_version: str = "eagle3.v1"
 
 
 def _create_mock_inference_output(
@@ -654,6 +656,49 @@ class TestEvalEndToEnd:
             for _ in range(3):
                 sample = q.get(timeout=5)
                 assert isinstance(sample, TrainSample)
+
+
+class TestRemoteModeDispatch:
+    def _create_controller(self, per_dp_rank_batch_size=2, dp_size=2):
+        AsyncTrainingController = _create_controller_class()
+        args = MockControllerArgs(
+            per_dp_rank_batch_size=per_dp_rank_batch_size,
+            inference_mode="remote_sglang",
+        )
+        return AsyncTrainingController(args, dp_size=dp_size)
+
+    def test_try_dispatch_batch_sends_raw_samples(self):
+        controller = self._create_controller(per_dp_rank_batch_size=2, dp_size=2)
+        dataset = [
+            {"data_id": f"s{i}", "input_ids": torch.tensor([i, i + 1]), "packed_loss_mask": f"m{i}"}
+            for i in range(4)
+        ]
+        controller.add_dataset(dataset)
+
+        assert controller.try_dispatch_batch() is True
+
+        for rank, queue in enumerate(controller.train_queues):
+            sample = queue.get(timeout=5)
+            assert sample["sample_key"] in {"s0", "s1", "s2", "s3"}
+            assert sample["feature_schema_version"] == "eagle3.v1"
+            assert isinstance(sample["input_ids"], list)
+            assert sample["packed_loss_mask"].startswith("m")
+
+    def test_try_dispatch_eval_batch_sends_raw_samples(self):
+        controller = self._create_controller(per_dp_rank_batch_size=2, dp_size=2)
+        dataset = [{"prompt": f"eval prompt {i}", "data_id": f"e{i}"} for i in range(2)]
+        controller.set_eval_dataset(dataset)
+        for i in range(2):
+            controller.prompt_buffer[i].input_ids = torch.tensor([i, i + 1])
+            controller.prompt_buffer[i].packed_loss_mask = f"eval-mask-{i}"
+
+        assert controller.try_dispatch_eval_batch() is True
+
+        for queue in controller.eval_queues:
+            sample = queue.get(timeout=5)
+            assert sample["sample_key"].startswith("eval_")
+            assert sample["feature_schema_version"] == "eagle3.v1"
+            assert isinstance(sample["input_ids"], list)
 
 
 if __name__ == "__main__":
