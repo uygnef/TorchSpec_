@@ -188,3 +188,21 @@ def test_setup_eval_dispatch_bs_caps_at_dataset_size():
         )
 
     assert state.eval_dispatch_bs == 4
+
+
+def test_run_training_loop_without_inference_manager_skips_run_remote():
+    args = SimpleNamespace(_mooncake_master_actor=mock.MagicMock())
+
+    with (
+        mock.patch("torchspec.controller.loop.training_loop", return_value="ok") as mock_impl,
+        mock.patch("torchspec.controller.loop._safe_training_cleanup") as mock_cleanup,
+    ):
+        result = loop.run_training_loop(args, object(), None, object())
+
+    assert result == "ok"
+    mock_impl.assert_called_once()
+    mock_cleanup.assert_called_once_with(
+        args=args,
+        inference_manager=None,
+        inference_future=None,
+    )
