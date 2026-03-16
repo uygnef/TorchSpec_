@@ -60,6 +60,13 @@ class MooncakeConfig:
     replica_num: int = 1
     enable_soft_pin: bool = False
     host_buffer_size: str | int | None = None
+    secondary_storage_dir: str | None = None
+    spill_to_disk_on_failure: bool = False
+    native_disk_eviction_enabled: bool = False
+    native_root_fs_dir: str | None = None
+    native_global_file_segment_size: str | int | None = None
+    native_quota_bytes: str | int | None = None
+    native_eviction_high_watermark_ratio: float | None = None
     get_batch_size: int = 1
     max_seq_len: int = 8192
     hidden_dim: int = 4096
@@ -80,6 +87,8 @@ class MooncakeConfig:
             "local_buffer_size",
             "host_buffer_size",
             "gpu_buffer_size",
+            "native_global_file_segment_size",
+            "native_quota_bytes",
         ):
             val = getattr(self, field_name)
             if isinstance(val, str):
@@ -159,6 +168,17 @@ class MooncakeConfig:
                 getattr(args, "max_seq_length", 8192),
             ),
             "hidden_dim": getattr(args, "mooncake_hidden_dim", 4096),
+            "native_disk_eviction_enabled": getattr(
+                args, "mooncake_native_disk_eviction_enabled", False
+            ),
+            "native_root_fs_dir": getattr(args, "mooncake_native_root_fs_dir", None),
+            "native_global_file_segment_size": getattr(
+                args, "mooncake_native_global_file_segment_size", None
+            ),
+            "native_quota_bytes": getattr(args, "mooncake_native_quota_bytes", None),
+            "native_eviction_high_watermark_ratio": getattr(
+                args, "mooncake_native_eviction_high_watermark_ratio", None
+            ),
         }
 
         if metadata_server is not None:

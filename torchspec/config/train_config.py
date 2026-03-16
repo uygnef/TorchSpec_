@@ -27,6 +27,8 @@ from typing import Any, Optional
 from omegaconf import DictConfig, OmegaConf
 
 from torchspec.config.inference_config import InferenceConfig
+from torchspec.data.utils import is_local_data_path
+from torchspec.utils.logging import logger
 
 
 @dataclass
@@ -167,17 +169,6 @@ class Config:
 
 _ALWAYS_LOCAL_PATH_KEYS = ("output_dir", "cache_dir", "model_download_dir")
 _DATA_PATH_KEYS = ("dataset.train_data_path", "dataset.eval_data_path")
-_LOCAL_DATA_EXTS = frozenset({".json", ".jsonl", ".parquet", ".arrow", ".csv", ".tsv", ".txt"})
-
-
-def is_local_data_path(path: str, base_dir: str | None = None) -> bool:
-    """True if *path* looks like a local file/directory rather than a HF Hub dataset ID."""
-    if path.startswith((".", "/", "~")):
-        return True
-    if os.path.splitext(path)[1].lower() in _LOCAL_DATA_EXTS:
-        return True
-    probe = os.path.join(base_dir, path) if base_dir is not None else path
-    return os.path.exists(probe)
 
 
 def _resolve_relative_paths(
@@ -227,8 +218,6 @@ def _validate_vllm_config(config: DictConfig) -> None:
 
 def _save_config_snapshot(config: DictConfig) -> None:
     """Save the resolved config to output_dir/config.yaml if output_dir is set."""
-    from torchspec.utils.logging import logger
-
     output_dir = OmegaConf.select(config, "output_dir", default=None)
     if not output_dir:
         return

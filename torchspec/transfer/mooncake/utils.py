@@ -78,6 +78,29 @@ def _normalize_ray_node_ip(host: str) -> str:
     return resolved
 
 
+def _coerce_size_bytes(value: str | int | None) -> int | None:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        size_str = value.upper().strip()
+        multipliers = [
+            ("TB", 1024 * 1024 * 1024 * 1024),
+            ("GB", 1024 * 1024 * 1024),
+            ("MB", 1024 * 1024),
+            ("KB", 1024),
+            ("T", 1024 * 1024 * 1024 * 1024),
+            ("G", 1024 * 1024 * 1024),
+            ("M", 1024 * 1024),
+            ("K", 1024),
+            ("B", 1),
+        ]
+        for suffix, multiplier in multipliers:
+            if size_str.endswith(suffix):
+                return int(float(size_str[: -len(suffix)]) * multiplier)
+        return int(size_str)
+    return int(value)
+
+
 class MooncakeMaster(RayActor):
     """Ray actor that wraps the mooncake master subprocess.
 
@@ -96,6 +119,11 @@ class MooncakeMaster(RayActor):
         http_port: int,
         http_host: str = "0.0.0.0",
         kv_lease_ttl_s: float = 5.0,
+        native_disk_eviction_enabled: bool = False,
+        native_root_fs_dir: str | None = None,
+        native_global_file_segment_size: int | None = None,
+        native_quota_bytes: int | None = None,
+        native_eviction_high_watermark_ratio: float | None = None,
     ) -> dict:
         """Launch the mooncake master subprocess.
 
@@ -124,8 +152,32 @@ class MooncakeMaster(RayActor):
             "--enable_http_metadata_server=true",
             f"--default_kv_lease_ttl={int(kv_lease_ttl_s * 1000)}",
         ]
+        if native_disk_eviction_enabled:
+            cmd.append("--enable_disk_eviction=true")
+            if native_root_fs_dir:
+                os.makedirs(native_root_fs_dir, exist_ok=True)
+                cmd.append(f"--root_fs_dir={native_root_fs_dir}")
+            if native_global_file_segment_size is not None:
+                cmd.append(
+                    "--global_file_segment_size="
+                    f"{_coerce_size_bytes(native_global_file_segment_size)}"
+                )
+            if native_quota_bytes is not None:
+                cmd.append(f"--quota_bytes={_coerce_size_bytes(native_quota_bytes)}")
+            if native_eviction_high_watermark_ratio is not None:
+                cmd.append(
+                    "--eviction_high_watermark_ratio="
+                    f"{float(native_eviction_high_watermark_ratio)}"
+                )
 
-        logger.info(f"Starting mooncake master on port {port}")
+        logger.info(
+            "Starting mooncake master on port %s (native_disk_eviction=%s, root_fs_dir=%s, global_file_segment_size=%s, quota_bytes=%s)",
+            port,
+            native_disk_eviction_enabled,
+            native_root_fs_dir,
+            native_global_file_segment_size,
+            native_quota_bytes,
+        )
 
         self._process = subprocess.Popen(
             cmd,
@@ -322,9 +374,32 @@ def launch_mooncake_master(args):
     actor = RemoteActor.options(**actor_options).remote()
 
     kv_lease_ttl_s = getattr(args, "mooncake_kv_lease_ttl_s", 5.0)
+    native_disk_eviction_enabled = getattr(
+        args, "mooncake_native_disk_eviction_enabled", False
+    )
+    native_root_fs_dir = getattr(args, "mooncake_native_root_fs_dir", None)
+    native_global_file_segment_size = getattr(
+        args, "mooncake_native_global_file_segment_size", None
+    )
+    native_quota_bytes = getattr(args, "mooncake_native_quota_bytes", None)
+    native_eviction_high_watermark_ratio = getattr(
+        args, "mooncake_native_eviction_high_watermark_ratio", None
+    )
 
     try:
-        info = ray.get(actor.start.remote(port, http_port, http_host, kv_lease_ttl_s))
+        info = ray.get(
+            actor.start.remote(
+                port,
+                http_port,
+                http_host,
+                kv_lease_ttl_s,
+                native_disk_eviction_enabled,
+                native_root_fs_dir,
+                native_global_file_segment_size,
+                native_quota_bytes,
+                native_eviction_high_watermark_ratio,
+            )
+        )
         # Write back resolved values (actor may have updated host from node IP)
         args.mooncake_master_server_address = info["master_addr"]
         args.mooncake_metadata_port = info["metadata_port"]

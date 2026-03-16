@@ -19,6 +19,7 @@ export TORCHSPEC_FEATURE_CACHE_TOUCH_INTERVAL_S="${TORCHSPEC_FEATURE_CACHE_TOUCH
 export TORCHSPEC_FEATURE_CACHE_CHUNK_SIZE="${TORCHSPEC_FEATURE_CACHE_CHUNK_SIZE:-64}"
 
 WORKING_DIR="${WORKING_DIR:-/nfs/ofs-llab-volume/users/fengyu/TorchSpec}"
+TRAIN_CONFIG_PATH="${TRAIN_CONFIG_PATH:-configs/remote_sglang_qwen3_8b.yaml}"
 cd "$WORKING_DIR"
 
 export RAY_worker_register_timeout_seconds="${RAY_worker_register_timeout_seconds:-300}"
@@ -43,6 +44,7 @@ import sys
 import time
 import urllib.request
 
+opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 endpoint = sys.argv[1].rstrip("/")
 timeout_seconds = int(sys.argv[2])
 deadline = time.time() + timeout_seconds
@@ -51,7 +53,7 @@ last_error = None
 
 while time.time() < deadline:
     try:
-        with urllib.request.urlopen(url, timeout=5) as response:
+        with opener.open(url, timeout=5) as response:
             payload = json.loads(response.read().decode("utf-8"))
         print(f"Remote SGLang ready: {url} -> {payload.get('model_path', 'unknown')}")
         sys.exit(0)
@@ -73,6 +75,10 @@ TRAIN_GPUS="${TRAIN_GPUS:-4}"
 OUTPUT_DIR="${OUTPUT_DIR:-/nfs/ofs-llab-volume/users/fengyu/o/qwen_remote_smoke}"
 CACHE_DIR="${CACHE_DIR:-/nfs/ofs-llab-volume/users/fengyu/c/qwen_remote_smoke}"
 FEATURE_CACHE_INDEX="${FEATURE_CACHE_INDEX:-$CACHE_DIR/train/remote_sglang_feature_cache.sqlite3}"
+MOONCAKE_NATIVE_ROOT_FS_DIR="${MOONCAKE_NATIVE_ROOT_FS_DIR:-$CACHE_DIR/train/mooncake_native_rootfs}"
+MOONCAKE_GLOBAL_SEGMENT_SIZE=${MOONCAKE_GLOBAL_SEGMENT_SIZE:-}
+MOONCAKE_LOCAL_BUFFER_SIZE=${MOONCAKE_LOCAL_BUFFER_SIZE:-}
+MOONCAKE_HOST_BUFFER_SIZE=${MOONCAKE_HOST_BUFFER_SIZE:-}
 LOCAL_IP="$(python - <<'PY'
 import socket
 s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -106,20 +112,31 @@ exec > >(tee -a "$LOG_FILE") 2>&1
 echo "Logging to: $LOG_FILE"
 
 echo "Clearing smoke cache directories and feature cache manifest"
-rm -rf "$CACHE_DIR/train" "$CACHE_DIR/config_only"
+rm -rf "$CACHE_DIR/train" "$CACHE_DIR/config_only" "$MOONCAKE_NATIVE_ROOT_FS_DIR"
 rm -f "$FEATURE_CACHE_INDEX"
 rm -f "$WORKING_DIR/cache/remote_sglang_feature_cache.sqlite3"
 mkdir -p "$(dirname "$FEATURE_CACHE_INDEX")"
 
 TRAIN_ENTRY_ARGS=(
-  --config configs/remote_sglang_qwen3_8b.yaml
+  --config "$TRAIN_CONFIG_PATH"
   "model.target_model_path=$MODEL_PATH"
   "dataset.train_data_path=$TRAIN_DATA_PATH"
   "training.training_num_gpus_per_node=$TRAIN_GPUS"
   "training.num_train_steps=100"
   "inference.remote_sglang.endpoint=$REMOTE_SGLANG_ENDPOINT"
   "feature_cache.index_path=$FEATURE_CACHE_INDEX"
+  "mooncake.native_disk_eviction_enabled=true"
+  "mooncake.native_root_fs_dir=$MOONCAKE_NATIVE_ROOT_FS_DIR"
 )
+if [ -n "$MOONCAKE_GLOBAL_SEGMENT_SIZE" ]; then
+  TRAIN_ENTRY_ARGS+=("mooncake.global_segment_size=$MOONCAKE_GLOBAL_SEGMENT_SIZE")
+fi
+if [ -n "$MOONCAKE_LOCAL_BUFFER_SIZE" ]; then
+  TRAIN_ENTRY_ARGS+=("mooncake.local_buffer_size=$MOONCAKE_LOCAL_BUFFER_SIZE")
+fi
+if [ -n "$MOONCAKE_HOST_BUFFER_SIZE" ]; then
+  TRAIN_ENTRY_ARGS+=("mooncake.host_buffer_size=$MOONCAKE_HOST_BUFFER_SIZE")
+fi
 if [ -n "${MOONCAKE_MASTER_ADDRESS:-}" ]; then
   TRAIN_ENTRY_ARGS+=("mooncake.master_server_address=$MOONCAKE_MASTER_ADDRESS")
 fi

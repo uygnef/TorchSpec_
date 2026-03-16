@@ -20,6 +20,8 @@
 
 import atexit
 import ctypes
+import hashlib
+import os
 import time
 from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
 
@@ -111,6 +113,69 @@ class EagleMooncakeStore(MooncakeHiddenStateStore):
                 stats,
             )
 
+    def _secondary_storage_enabled(self) -> bool:
+        return bool(getattr(self.config, "secondary_storage_dir", None))
+
+    def _disk_path_for_key(self, key: str) -> str:
+        if not self._secondary_storage_enabled():
+            raise RuntimeError("secondary storage is not configured")
+        root = os.path.abspath(self.config.secondary_storage_dir)
+        digest = hashlib.sha1(key.encode("utf-8")).hexdigest()
+        return os.path.join(root, f"{digest}.pt")
+
+    def _disk_exists(self, key: str) -> bool:
+        if not self._secondary_storage_enabled():
+            return False
+        return os.path.exists(self._disk_path_for_key(key))
+
+    def _has_complete_disk_bundle(self, keys: List[str]) -> bool:
+        return bool(keys) and all(self._disk_exists(key) for key in keys)
+
+    def _spill_entries_to_disk(self, entries: List[Tuple[str, torch.Tensor, int]]) -> None:
+        if not self._secondary_storage_enabled():
+            raise RuntimeError("secondary storage is not configured")
+        root = os.path.abspath(self.config.secondary_storage_dir)
+        os.makedirs(root, exist_ok=True)
+        for tensor_key, tensor, _ in entries:
+            path = self._disk_path_for_key(tensor_key)
+            tmp_path = path + ".tmp"
+            torch.save(tensor.detach().cpu(), tmp_path)
+            os.replace(tmp_path, path)
+
+    def _get_tensors_from_disk(
+        self,
+        keys: List[str],
+        tensor_specs: List[Tuple[str, Tuple[int, ...], torch.dtype]],
+        device: torch.device,
+    ) -> Dict[str, torch.Tensor]:
+        tensor_map: Dict[str, torch.Tensor] = {}
+        for key, (name, shape, dtype) in zip(keys, tensor_specs):
+            path = self._disk_path_for_key(key)
+            tensor = torch.load(path, map_location="cpu", weights_only=False)
+            if tuple(tensor.shape) != tuple(shape):
+                raise RuntimeError(
+                    f"Disk spill shape mismatch for {name}: got {tuple(tensor.shape)}, expected {shape}"
+                )
+            tensor = tensor.to(dtype=dtype)
+            tensor_map[name] = tensor.to(device)
+            if name == "input_ids":
+                tensor_map["input_ids_cpu"] = tensor.clone()
+        return tensor_map
+
+    def remove(self, key: str) -> None:
+        disk_removed = False
+        if self._disk_exists(key):
+            os.remove(self._disk_path_for_key(key))
+            disk_removed = True
+        try:
+            super().remove(key)
+        except Exception:
+            if not disk_removed:
+                raise
+
+    def exists(self, key: str) -> bool:
+        return self._disk_exists(key) or super().exists(key)
+
     def put(
         self,
         key: str,
@@ -151,6 +216,32 @@ class EagleMooncakeStore(MooncakeHiddenStateStore):
         sizes = [nbytes for _, _, nbytes in non_empty_entries]
         buffer_ptrs = []
 
+        shapes = {
+            "hidden_states": tuple(hidden_states.shape),
+            "input_ids": tuple(input_ids.shape),
+        }
+        if target is not None:
+            shapes["target"] = tuple(target.shape)
+        if last_hidden_states is not None:
+            shapes["last_hidden_states"] = tuple(last_hidden_states.shape)
+
+        if (
+            non_empty_entries
+            and self._secondary_storage_enabled()
+            and getattr(self.config, "spill_to_disk_on_failure", False)
+            and total_bytes > self.config.host_buffer_size
+        ):
+            logger.warning(
+                "Mooncake put for key=%s exceeds host buffer (%s > %s); spilling %d tensors to secondary storage (%s).",
+                key,
+                _format_bytes(total_bytes),
+                _format_bytes(self.config.host_buffer_size),
+                len(non_empty_entries),
+                self.config.secondary_storage_dir,
+            )
+            self._spill_entries_to_disk(non_empty_entries)
+            return shapes
+
         host_buf = None
         if non_empty_entries:
             if self._host_buffer_pool is None:
@@ -172,14 +263,28 @@ class EagleMooncakeStore(MooncakeHiddenStateStore):
                 )
             host_buf = self._host_buffer_pool.get_buffer()
             offset = 0
-            for _, tensor, nbytes in non_empty_entries:
-                copied = host_buf.copy_from_tensor(tensor, offset=offset)
-                if copied != nbytes:
-                    raise RuntimeError(
-                        f"Unexpected staged byte count for Mooncake key {key}: copied={copied}, expected={nbytes}"
+            try:
+                for _, tensor, nbytes in non_empty_entries:
+                    copied = host_buf.copy_from_tensor(tensor, offset=offset)
+                    if copied != nbytes:
+                        raise RuntimeError(
+                            f"Unexpected staged byte count for Mooncake key {key}: copied={copied}, expected={nbytes}"
+                        )
+                    buffer_ptrs.append(host_buf.ptr + offset)
+                    offset += nbytes
+            except ValueError:
+                if self._secondary_storage_enabled() and getattr(
+                    self.config, "spill_to_disk_on_failure", False
+                ):
+                    logger.warning(
+                        "Mooncake staging overflow for key=%s; spilling %d tensors to secondary storage (%s).",
+                        key,
+                        len(non_empty_entries),
+                        self.config.secondary_storage_dir,
                     )
-                buffer_ptrs.append(host_buf.ptr + offset)
-                offset += nbytes
+                    self._spill_entries_to_disk(non_empty_entries)
+                    return shapes
+                raise
 
         def _run_batch_put() -> List[Tuple[str, int, int, int]]:
             if not keys:
@@ -210,20 +315,21 @@ class EagleMooncakeStore(MooncakeHiddenStateStore):
                 f"local_buffer_size={_format_bytes(self.config.local_buffer_size)}, "
                 f"host_buffer_size={_format_bytes(self.config.host_buffer_size)}"
             )
+            if self._secondary_storage_enabled() and getattr(self.config, "spill_to_disk_on_failure", False):
+                logger.warning(
+                    "Mooncake put failed for key=%s; spilling %d tensors to secondary storage (%s). failures=%s",
+                    key,
+                    len(non_empty_entries),
+                    self.config.secondary_storage_dir,
+                    failure_details,
+                )
+                self._spill_entries_to_disk(non_empty_entries)
+                return shapes
             raise RuntimeError(
                 f"batch_put_from failed for keys: {failure_details}. "
                 f"{config_details}. Consider increasing Mooncake segment/buffer sizes "
                 "or reducing batch/sequence length/prefetch depth."
             )
-
-        shapes = {
-            "hidden_states": tuple(hidden_states.shape),
-            "input_ids": tuple(input_ids.shape),
-        }
-        if target is not None:
-            shapes["target"] = tuple(target.shape)
-        if last_hidden_states is not None:
-            shapes["last_hidden_states"] = tuple(last_hidden_states.shape)
 
         logger.debug(
             "[MOONCAKE] put: completed key=%s, total_bytes=%s, shapes=%s",
@@ -305,15 +411,19 @@ class EagleMooncakeStore(MooncakeHiddenStateStore):
 
         tensor_map = {}
         if fetch_keys:
-            tensor_map = None
-            if self._gpu_direct_available and self._gpu_receive_buffer is not None:
-                tensor_map = self._get_tensors_gpu_direct(fetch_keys, fetch_specs, device)
-                if tensor_map is None:
-                    logger.warning("GPUDirect batch_get_into failed; falling back to host buffer path.")
+            if self._has_complete_disk_bundle(fetch_keys):
+                tensor_map = self._get_tensors_from_disk(fetch_keys, fetch_specs, device)
+                logger.debug("Using secondary disk storage path")
+            else:
+                tensor_map = None
+                if self._gpu_direct_available and self._gpu_receive_buffer is not None:
+                    tensor_map = self._get_tensors_gpu_direct(fetch_keys, fetch_specs, device)
+                    if tensor_map is None:
+                        logger.warning("GPUDirect batch_get_into failed; falling back to host buffer path.")
 
-            if tensor_map is None:
-                tensor_map = self._get_tensors_via_host_buffer(fetch_keys, fetch_specs, device)
-                logger.debug("Using host buffer path (TCP)")
+                if tensor_map is None:
+                    tensor_map = self._get_tensors_via_host_buffer(fetch_keys, fetch_specs, device)
+                    logger.debug("Using host buffer path (TCP)")
 
         for name, shape, dtype in zero_specs:
             tensor_map[name] = torch.empty(shape, dtype=dtype, device=device)
@@ -508,13 +618,23 @@ class EagleMooncakeStore(MooncakeHiddenStateStore):
         if has_last_hidden_states:
             keys.append(f"{key}_lhs")
 
+        for tensor_key in keys:
+            if self._disk_exists(tensor_key):
+                try:
+                    os.remove(self._disk_path_for_key(tensor_key))
+                except FileNotFoundError:
+                    pass
+
+        mooncake_keys = [tensor_key for tensor_key in keys if super(EagleMooncakeStore, self).exists(tensor_key)]
+        if not mooncake_keys:
+            return
+
         logger.debug(
             "Queueing deferred deletion for base_key=%s, num_keys=%d",
             key,
-            len(keys),
+            len(mooncake_keys),
         )
 
-        # Queue deletion instead of deleting immediately
         if self._deferred_delete_manager is None:
             logger.error(
                 "Deferred delete manager not initialized! Cannot delete %s",
@@ -523,7 +643,7 @@ class EagleMooncakeStore(MooncakeHiddenStateStore):
             return
 
         success = self._deferred_delete_manager.enqueue_delete(
-            keys=keys,
+            keys=mooncake_keys,
             base_key=key,
             max_attempts=3,
         )

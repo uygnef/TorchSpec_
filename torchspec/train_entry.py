@@ -212,20 +212,9 @@ def train_async_no_generation(args):
     init_tracking(args)
     timer = _InitTimer()
 
-    # [1] Create controller early (lightweight: only needs args + dp_size)
-    with timer.phase("Create controller"):
-        driver_node_id = ray.get_runtime_context().get_node_id()
-        controller = AsyncTrainingController.options(
-            runtime_env=get_torchspec_runtime_env(),
-            scheduling_strategy=NodeAffinitySchedulingStrategy(node_id=driver_node_id, soft=False),
-        ).remote(args, args.dp_size)
-
-    # [2] Kick off dataset loading on controller (async — runs on actor while driver continues)
-    timer.begin_async("Dataset loading")
-    dataset_size_ref = controller.load_dataset.remote(args)
-    eval_dataset_size_ref = controller.load_eval_dataset.remote(args)
-
-    # [3] Do initialization that doesn't depend on dataset in parallel
+    # [1] Initialize Ray and placement groups before creating any actors.
+    # Otherwise the first actor creation can auto-start a local Ray instance
+    # without TorchSpec's local fallback settings, including the runtime-env skip.
     with timer.phase("Driver-side init"):
         draft_model_config = _get_draft_model_config(args)
         args.draft_model_config_obj = draft_model_config
@@ -233,6 +222,19 @@ def train_async_no_generation(args):
         pgs = create_placement_groups(args)
         launch_mooncake_master(args)
         mooncake_config = build_mooncake_config(args)
+
+    # [2] Create controller early (lightweight: only needs args + dp_size)
+    with timer.phase("Create controller"):
+        driver_node_id = ray.get_runtime_context().get_node_id()
+        controller = AsyncTrainingController.options(
+            runtime_env=get_torchspec_runtime_env(),
+            scheduling_strategy=NodeAffinitySchedulingStrategy(node_id=driver_node_id, soft=False),
+        ).remote(args, args.dp_size)
+
+    # [3] Kick off dataset loading on controller (async — runs on actor while driver continues)
+    timer.begin_async("Dataset loading")
+    dataset_size_ref = controller.load_dataset.remote(args)
+    eval_dataset_size_ref = controller.load_eval_dataset.remote(args)
 
     # [4] Wait for dataset sizes (small ints, unlike the old ray.put of the full dataset)
     dataset_size, eval_dataset_size = timer.wait(
@@ -282,7 +284,8 @@ def train_async_no_generation(args):
         # dispatched after to maximize parallelism with the wait below.
         _maybe_create_scratch_draft(args, train_group)
 
-        if getattr(args, "inference_mode", "local") == "remote_sglang":
+        inference_mode = getattr(args, "inference_mode", None) or getattr(args, "mode", "local")
+        if inference_mode == "remote_sglang" or getattr(args, "remote_sglang_endpoint", None):
             inference_engines, engine_init_refs = [], []
         else:
             inference_engines, engine_init_refs = prepare_inference_engines(

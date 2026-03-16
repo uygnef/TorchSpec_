@@ -30,6 +30,7 @@ class RemoteSGLangClient:
         self.hidden_size = hidden_size
         self.num_aux_hidden_layers = num_aux_hidden_layers
         self.torch_dtype = self._normalize_torch_dtype(torch_dtype)
+        self._opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
     def request_features(
         self,
@@ -65,7 +66,7 @@ class RemoteSGLangClient:
         last_error: Exception | None = None
         for attempt in range(self.max_retries + 1):
             try:
-                with urllib.request.urlopen(request, timeout=self.timeout_seconds) as response:
+                with self._opener.open(request, timeout=self.timeout_seconds) as response:
                     body = json.loads(response.read().decode("utf-8"))
                 return self._parse_response(
                     body=body,

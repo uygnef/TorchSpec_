@@ -120,24 +120,14 @@ def _find_free_port() -> int:
 
 
 def _get_local_ray_init_kwargs() -> dict:
-    """Allocate explicit local Ray agent ports to avoid stale-port collisions."""
+    """Return supported local Ray init kwargs for this Ray version."""
     os.environ.setdefault("RAY_worker_register_timeout_seconds", "300")
     os.environ.setdefault("RAY_agent_register_timeout_ms", "300000")
-    kwargs = {
-        "include_dashboard": False,
-        "runtime_env_agent_port": _find_free_port(),
-        "dashboard_agent_listen_port": _find_free_port(),
-        "metrics_agent_port": _find_free_port(),
-        "metrics_export_port": _find_free_port(),
-    }
+    kwargs = {"include_dashboard": False}
     logger.info(
-        "Starting local Ray with explicit agent ports: runtime_env_agent_port=%s, "
-        "dashboard_agent_listen_port=%s, metrics_agent_port=%s, metrics_export_port=%s, "
+        "Starting local Ray fallback: include_dashboard=%s, "
         "worker_register_timeout_seconds=%s, agent_register_timeout_ms=%s",
-        kwargs["runtime_env_agent_port"],
-        kwargs["dashboard_agent_listen_port"],
-        kwargs["metrics_agent_port"],
-        kwargs["metrics_export_port"],
+        kwargs["include_dashboard"],
         os.environ["RAY_worker_register_timeout_seconds"],
         os.environ["RAY_agent_register_timeout_ms"],
     )
