@@ -23,12 +23,10 @@ import socket
 from typing import List
 
 import ray
-from transformers import AutoConfig
 
 
 def get_current_node_ip():
     address = ray._private.services.get_node_ip_address()
-    # strip ipv6 address
     address = address.strip("[]")
     return address
 
@@ -48,7 +46,6 @@ def _is_port_available(port):
 
 
 def get_free_port(start_port=10000, consecutive=1):
-    # find the port where port, port + 1, port + 2, ... port + consecutive - 1 are all available
     port = start_port
     while not all(_is_port_available(port + i) for i in range(consecutive)):
         port += 1
@@ -58,13 +55,10 @@ def get_free_port(start_port=10000, consecutive=1):
 def _to_local_gpu_id(physical_gpu_id: int) -> int:
     cvd = os.environ.get("CUDA_VISIBLE_DEVICES")
     if not cvd:
-        return physical_gpu_id  # no remapping
-    # CUDA_VISIBLE_DEVICES can be like "4,5,6,7"
+        return physical_gpu_id
     visible = [int(x) for x in cvd.split(",") if x.strip() != ""]
-    # In a remapped process, valid torch device indices are 0..len(visible)-1
     if physical_gpu_id in visible:
         return visible.index(physical_gpu_id)
-    # If we're already getting local IDs, allow them
     if 0 <= physical_gpu_id < len(visible):
         return physical_gpu_id
     raise RuntimeError(
@@ -74,15 +68,11 @@ def _to_local_gpu_id(physical_gpu_id: int) -> int:
 
 
 def get_default_eagle3_aux_layer_ids(model_path: str) -> List[int]:
-    """Get default auxiliary hidden state layer IDs for EAGLE3.
+    """Get default auxiliary hidden state layer IDs for EAGLE3."""
+    from transformers import AutoConfig
 
-    Args:
-        model_path: Path to the HuggingFace model checkpoint.
-
-    Returns:
-        List of 3 layer IDs: [1, num_layers // 2 - 1, num_layers - 4]
-    """
     config = AutoConfig.from_pretrained(model_path, trust_remote_code=True)
     config = getattr(config, "text_config", config)
     num_layers = config.num_hidden_layers
     return [1, num_layers // 2 - 1, num_layers - 4]
+

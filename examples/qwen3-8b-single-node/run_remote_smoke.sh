@@ -76,6 +76,8 @@ OUTPUT_DIR="${OUTPUT_DIR:-/nfs/ofs-llab-volume/users/fengyu/o/qwen_remote_smoke}
 CACHE_DIR="${CACHE_DIR:-/nfs/ofs-llab-volume/users/fengyu/c/qwen_remote_smoke}"
 FEATURE_CACHE_INDEX="${FEATURE_CACHE_INDEX:-$CACHE_DIR/train/remote_sglang_feature_cache.sqlite3}"
 MOONCAKE_NATIVE_ROOT_FS_DIR="${MOONCAKE_NATIVE_ROOT_FS_DIR:-$CACHE_DIR/train/mooncake_native_rootfs}"
+RAY_TMPDIR="${RAY_TMPDIR:-/tmp-data/torchspec_ray}"
+TMPDIR="${TMPDIR:-/tmp-data/torchspec_tmp}"
 MOONCAKE_GLOBAL_SEGMENT_SIZE=${MOONCAKE_GLOBAL_SEGMENT_SIZE:-}
 MOONCAKE_LOCAL_BUFFER_SIZE=${MOONCAKE_LOCAL_BUFFER_SIZE:-}
 MOONCAKE_HOST_BUFFER_SIZE=${MOONCAKE_HOST_BUFFER_SIZE:-}
@@ -112,10 +114,12 @@ exec > >(tee -a "$LOG_FILE") 2>&1
 echo "Logging to: $LOG_FILE"
 
 echo "Clearing smoke cache directories and feature cache manifest"
-rm -rf "$CACHE_DIR/train" "$CACHE_DIR/config_only" "$MOONCAKE_NATIVE_ROOT_FS_DIR"
+rm -rf "$CACHE_DIR/train" "$CACHE_DIR/config_only" "$MOONCAKE_NATIVE_ROOT_FS_DIR" "$RAY_TMPDIR" "$TMPDIR"
 rm -f "$FEATURE_CACHE_INDEX"
 rm -f "$WORKING_DIR/cache/remote_sglang_feature_cache.sqlite3"
-mkdir -p "$(dirname "$FEATURE_CACHE_INDEX")"
+mkdir -p "$(dirname "$FEATURE_CACHE_INDEX")" "$RAY_TMPDIR" "$TMPDIR"
+export RAY_TMPDIR TMPDIR
+echo "Ray temp dir: $RAY_TMPDIR"
 
 TRAIN_ENTRY_ARGS=(
   --config "$TRAIN_CONFIG_PATH"

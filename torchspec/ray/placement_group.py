@@ -124,12 +124,17 @@ def _get_local_ray_init_kwargs() -> dict:
     os.environ.setdefault("RAY_worker_register_timeout_seconds", "300")
     os.environ.setdefault("RAY_agent_register_timeout_ms", "300000")
     kwargs = {"include_dashboard": False}
+    ray_tmpdir = os.environ.get("RAY_TMPDIR")
+    if ray_tmpdir:
+        os.makedirs(ray_tmpdir, exist_ok=True)
+        kwargs["_temp_dir"] = ray_tmpdir
     logger.info(
         "Starting local Ray fallback: include_dashboard=%s, "
-        "worker_register_timeout_seconds=%s, agent_register_timeout_ms=%s",
+        "worker_register_timeout_seconds=%s, agent_register_timeout_ms=%s, temp_dir=%s",
         kwargs["include_dashboard"],
         os.environ["RAY_worker_register_timeout_seconds"],
         os.environ["RAY_agent_register_timeout_ms"],
+        kwargs.get("_temp_dir", "<default>"),
     )
     return kwargs
 

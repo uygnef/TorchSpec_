@@ -161,6 +161,9 @@ def load_conversation_dataset(args):
 
     total_estimate = estimate_row_count(args.train_data_path)
     num_proc = getattr(args, "num_proc", 64)
+    if num_proc > 1 and (os.environ.get("RAY_RAYLET_PID") or os.environ.get("RAY_JOB_ID")):
+        logger.info("Detected Ray worker context; forcing dataset preprocessing num_proc=1 to avoid multiprocessing pool hangs")
+        num_proc = 1
 
     # Pass 1: collect and normalize raw samples (fast I/O, no tokenization)
     raw_samples = []

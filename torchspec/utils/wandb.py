@@ -18,13 +18,16 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
+import importlib
 import logging
 import os
 from copy import deepcopy
 
-import wandb
-
 logger = logging.getLogger(__name__)
+
+
+def _load_wandb():
+    return importlib.import_module("wandb")
 
 
 def _is_offline_mode(args) -> bool:
@@ -44,7 +47,8 @@ def init_wandb_primary(args):
         args.wandb_run_id = None
         return
 
-    # Set W&B mode if specified (overrides WANDB_MODE env var)
+    wandb = _load_wandb()
+
     if args.wandb_mode:
         os.environ["WANDB_MODE"] = args.wandb_mode
         if args.wandb_mode == "offline":
@@ -56,12 +60,9 @@ def init_wandb_primary(args):
 
     offline = _is_offline_mode(args)
 
-    # Only perform explicit login when NOT offline
     if (not offline) and args.wandb_key is not None:
         wandb.login(key=args.wandb_key, host=args.wandb_host)
 
-    # Prepare wandb init parameters
-    # add random 6 length string with characters
     base_group = args.wandb_group or args.wandb_project or "default"
     if args.wandb_random_suffix:
         group = base_group + "_" + wandb.util.generate_id()
@@ -70,7 +71,6 @@ def init_wandb_primary(args):
         group = base_group
         run_name = base_group
 
-    # Prepare wandb init parameters
     init_kwargs = {
         "entity": args.wandb_team,
         "project": args.wandb_project,
@@ -79,24 +79,19 @@ def init_wandb_primary(args):
         "config": _compute_config_for_logging(args),
     }
 
-    # Configure settings based on offline/online mode
     if offline:
         init_kwargs["settings"] = wandb.Settings(mode="offline")
     else:
         init_kwargs["settings"] = wandb.Settings(mode="shared", x_primary=True)
 
-    # Add custom directory if specified
     if args.wandb_dir:
-        # Ensure directory exists to avoid backend crashes
         os.makedirs(args.wandb_dir, exist_ok=True)
         init_kwargs["dir"] = args.wandb_dir
         logger.info(f"W&B logs will be stored in: {args.wandb_dir}")
 
     wandb.init(**init_kwargs)
 
-    _init_wandb_common()
-
-    # Set wandb_run_id in args for easy access throughout the training process
+    _init_wandb_common(wandb)
     args.wandb_run_id = wandb.run.id
 
 
@@ -105,20 +100,19 @@ def _compute_config_for_logging(args):
 
     whitelist_env_vars = [
         "SLURM_JOB_ID",
-        # We may insert more default values here, and may also allow users to configure a whitelist
     ]
     output["env_vars"] = {k: v for k, v in os.environ.items() if k in whitelist_env_vars}
 
     return output
 
 
-# https://docs.wandb.ai/guides/track/log/distributed-training/#track-all-processes-to-a-single-run
 def init_wandb_secondary(args, router_addr=None):
     wandb_run_id = getattr(args, "wandb_run_id", None)
     if wandb_run_id is None:
         return
 
-    # Set W&B mode if specified (same as primary)
+    wandb = _load_wandb()
+
     if args.wandb_mode:
         os.environ["WANDB_MODE"] = args.wandb_mode
 
@@ -127,7 +121,6 @@ def init_wandb_secondary(args, router_addr=None):
     if (not offline) and args.wandb_key is not None:
         wandb.login(key=args.wandb_key, host=args.wandb_host)
 
-    # Configure settings based on offline/online mode
     if offline:
         settings_kwargs = dict(mode="offline")
     else:
@@ -158,44 +151,27 @@ def init_wandb_secondary(args, router_addr=None):
         "settings": wandb.Settings(**settings_kwargs),
     }
 
-    # Add custom directory if specified
     if args.wandb_dir:
         os.makedirs(args.wandb_dir, exist_ok=True)
         init_kwargs["dir"] = args.wandb_dir
 
     wandb.init(**init_kwargs)
 
-    _init_wandb_common()
+    _init_wandb_common(wandb)
 
 
-def _init_wandb_common():
-    # Training metrics
+def _init_wandb_common(wandb):
     wandb.define_metric("train/step")
     wandb.define_metric("train/*", step_metric="train/step")
-
-    # Performance metrics (tied to training step)
     wandb.define_metric("perf/*", step_metric="train/step")
-
-    # Data pipeline metrics
     wandb.define_metric("data/*", step_metric="train/step")
-
-    # Model health metrics
     wandb.define_metric("model/*", step_metric="train/step")
-
-    # Learning rate schedule metrics
     wandb.define_metric("lr/*", step_metric="train/step")
-
-    # Inference metrics
     wandb.define_metric("inference/step")
     wandb.define_metric("inference/*", step_metric="inference/step")
-
-    # Controller metrics (async pipeline)
     wandb.define_metric("controller/*", step_metric="train/step")
-
-    # Multi-turn and passrate metrics
     wandb.define_metric("multi_turn/*", step_metric="inference/step")
     wandb.define_metric("passrate/*", step_metric="inference/step")
-
-    # Evaluation metrics
     wandb.define_metric("eval/step")
     wandb.define_metric("eval/*", step_metric="eval/step")
+
