@@ -202,7 +202,7 @@ class RayTrainGroup:
                 f"Number of queues ({len(queues)}) must match number of actors ({actor_count})"
             )
 
-        sp_size = getattr(self.args, "sp_ulysses_size", 1) * getattr(self.args, "sp_ring_size", 1)
+        sp_size = getattr(self.args, "sp_size", 1)
         if sp_size <= 0 or actor_count % sp_size != 0:
             raise ValueError(f"Invalid USP topology: actor_count={actor_count}, sp_size={sp_size}")
         dp_size = actor_count // sp_size

@@ -125,7 +125,7 @@ class AsyncTrainingController:
         self.args = args
         self.dp_size = dp_size
         self.sp_size = (
-            getattr(args, "sp_ulysses_size", 1) * getattr(args, "sp_ring_size", 1)
+            getattr(args, "sp_size", 1)
             if getattr(args, "attention_backend", None) == "usp"
             else 1
         )

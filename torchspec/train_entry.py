@@ -146,6 +146,8 @@ def parse_config():
         if not hasattr(flat_args, key) or getattr(flat_args, key) is None:
             setattr(flat_args, key, value)
 
+    draft_model_config = _get_draft_model_config(flat_args)
+    _derive_usp_topology(flat_args, draft_model_config)
     _resolve_batch_size(flat_args)
     _validate_usp_args(flat_args)
 
@@ -171,7 +173,7 @@ def _resolve_batch_size(args):
     """Derive dp_size, per_dp_rank_batch_size, dispatch_batch_size, and global_batch_size."""
     world_size = args.training_num_nodes * args.training_num_gpus_per_node
     if getattr(args, "attention_backend", None) == "usp":
-        sp_size = getattr(args, "sp_ulysses_size", 1) * getattr(args, "sp_ring_size", 1)
+        sp_size = getattr(args, "sp_size", 1)
         if sp_size <= 0:
             raise ValueError(f"USP requires positive sp_size, got {sp_size}")
         if world_size % sp_size != 0:
@@ -205,9 +207,7 @@ def _validate_usp_args(args) -> None:
     if getattr(args, "attention_backend", None) != "usp":
         return
 
-    sp_size = getattr(args, "sp_size", None)
-    if sp_size is None:
-        sp_size = getattr(args, "sp_ulysses_size", 1) * getattr(args, "sp_ring_size", 1)
+    sp_size = getattr(args, "sp_size", 1)
     if sp_size <= 1:
         raise NotImplementedError(f"USP requires sp_size > 1, got {sp_size}")
 
@@ -228,6 +228,56 @@ def _validate_usp_args(args) -> None:
         raise NotImplementedError(
             f"USP currently only supports micro_batch_size=1, got {micro_batch_size}"
         )
+
+
+def _get_attention_head_counts(draft_model_config) -> list[int]:
+    head_counts = []
+    for name in ("num_attention_heads", "num_key_value_heads"):
+        value = getattr(draft_model_config, name, None)
+        if value is not None:
+            head_counts.append(int(value))
+    if not head_counts:
+        value = getattr(draft_model_config, "num_heads", None)
+        if value is not None:
+            head_counts.append(int(value))
+    return head_counts
+
+
+def _derive_usp_topology(args, draft_model_config) -> None:
+    if getattr(args, "attention_backend", None) != "usp":
+        return
+
+    sp_size = int(getattr(args, "sp_size", 1))
+    if sp_size <= 0:
+        raise ValueError(f"USP requires positive sp_size, got {sp_size}")
+
+    gpus_per_node = int(getattr(args, "training_num_gpus_per_node", 1))
+    head_counts = _get_attention_head_counts(draft_model_config)
+    if not head_counts:
+        raise ValueError("USP topology auto-derivation requires draft attention head counts")
+
+    candidate_limit = min(sp_size, gpus_per_node)
+    sp_ulysses_size = 1
+    for candidate in range(candidate_limit, 0, -1):
+        if sp_size % candidate != 0:
+            continue
+        if all(head_count % candidate == 0 for head_count in head_counts):
+            sp_ulysses_size = candidate
+            break
+
+    sp_ring_size = sp_size // sp_ulysses_size
+    args.sp_size = sp_size
+    args.sp_ulysses_size = sp_ulysses_size
+    args.sp_ring_size = sp_ring_size
+    logger.info(
+        "Derived USP topology: sp_size=%s, sp_ulysses_size=%s, sp_ring_size=%s "
+        "(gpus_per_node=%s, head_counts=%s)",
+        sp_size,
+        sp_ulysses_size,
+        sp_ring_size,
+        gpus_per_node,
+        head_counts,
+    )
 
 
 def _get_draft_model_config(args):

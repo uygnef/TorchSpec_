@@ -106,6 +106,8 @@ class TrainingConfig:
     # "training_first" (default) or "inference_first". Extensible to custom mappings later.
     placement_strategy: str = "training_first"
     compile_model: bool = False  # torch.compile the full training model
+    sp_size: int = 1
+    # Derived automatically from sp_size, per-node GPU count, and attention head counts.
     sp_ring_size: int = 1
     sp_ulysses_size: int = 1
 

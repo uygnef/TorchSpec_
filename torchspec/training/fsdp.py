@@ -176,7 +176,7 @@ def apply_fsdp2(
         logger.info("Using REPLICATE strategy (DDP-like, gradient all-reduce only)")
         replicate(model, device_mesh=mesh)
         if args is not None and getattr(args, "attention_backend", None) == "usp":
-            sp_size = getattr(args, "sp_ulysses_size", 1) * getattr(args, "sp_ring_size", 1)
+            sp_size = getattr(args, "sp_size", 1)
             if sp_size > 1:
                 process_group = mesh.get_group() if mesh is not None else dist.group.WORLD
                 divide_factor = dist.get_world_size(process_group) // sp_size
