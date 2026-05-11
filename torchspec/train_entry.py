@@ -146,8 +146,7 @@ def parse_config():
         if not hasattr(flat_args, key) or getattr(flat_args, key) is None:
             setattr(flat_args, key, value)
 
-    draft_model_config = _get_draft_model_config(flat_args)
-    _derive_usp_topology(flat_args, draft_model_config)
+    _derive_usp_topology(flat_args)
     _resolve_batch_size(flat_args)
     _validate_usp_args(flat_args)
 
@@ -243,13 +242,28 @@ def _get_attention_head_counts(draft_model_config) -> list[int]:
     return head_counts
 
 
-def _derive_usp_topology(args, draft_model_config) -> None:
+def _derive_usp_topology(args) -> None:
     if getattr(args, "attention_backend", None) != "usp":
         return
 
+    draft_model_config = _get_draft_model_config(args)
     sp_size = int(getattr(args, "sp_size", 1))
+    configured_ulysses_size = int(getattr(args, "sp_ulysses_size", 1))
+    configured_ring_size = int(getattr(args, "sp_ring_size", 1))
+    configured_sp_size = configured_ulysses_size * configured_ring_size
     if sp_size <= 0:
         raise ValueError(f"USP requires positive sp_size, got {sp_size}")
+    if configured_sp_size > 1:
+        if sp_size > 1 and sp_size != configured_sp_size:
+            raise ValueError(
+                "USP sp_size must match sp_ulysses_size * sp_ring_size when both are set, "
+                f"got sp_size={sp_size}, sp_ulysses_size={configured_ulysses_size}, "
+                f"sp_ring_size={configured_ring_size}"
+            )
+        args.sp_size = configured_sp_size
+        args.sp_ulysses_size = configured_ulysses_size
+        args.sp_ring_size = configured_ring_size
+        return
 
     gpus_per_node = int(getattr(args, "training_num_gpus_per_node", 1))
     head_counts = _get_attention_head_counts(draft_model_config)

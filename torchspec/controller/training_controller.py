@@ -125,9 +125,7 @@ class AsyncTrainingController:
         self.args = args
         self.dp_size = dp_size
         self.sp_size = (
-            getattr(args, "sp_size", 1)
-            if getattr(args, "attention_backend", None) == "usp"
-            else 1
+            getattr(args, "sp_size", 1) if getattr(args, "attention_backend", None) == "usp" else 1
         )
         self.queue_count = dp_size * self.sp_size
 
