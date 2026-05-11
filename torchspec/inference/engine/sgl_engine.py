@@ -78,7 +78,7 @@ def _configure_usp_sharded_mooncake_env(args: Any, max_seq_length: int | None) -
         sp_ring_size = getattr(args, "sp_ring_size", 1)
         values = {
             "TORCHSPEC_USP_SHARDED_MOONCAKE": "1",
-            "TORCHSPEC_USP_SP_SIZE": str(getattr(args, "sp_size", 1)),
+            "TORCHSPEC_USP_SP_SIZE": str(getattr(args, "sp_ulysses_size", 1) * sp_ring_size),
             "TORCHSPEC_USP_RING_SIZE": str(sp_ring_size),
             "TORCHSPEC_USP_TTT_LENGTH": str(getattr(args, "ttt_length", 1)),
         }

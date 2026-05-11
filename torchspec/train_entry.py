@@ -246,7 +246,6 @@ def _derive_usp_topology(args) -> None:
     if getattr(args, "attention_backend", None) != "usp":
         return
 
-    draft_model_config = _get_draft_model_config(args)
     sp_size = int(getattr(args, "sp_size", 1))
     configured_ulysses_size = int(getattr(args, "sp_ulysses_size", 1))
     configured_ring_size = int(getattr(args, "sp_ring_size", 1))
@@ -265,6 +264,7 @@ def _derive_usp_topology(args) -> None:
         args.sp_ring_size = configured_ring_size
         return
 
+    draft_model_config = _get_draft_model_config(args)
     gpus_per_node = int(getattr(args, "training_num_gpus_per_node", 1))
     head_counts = _get_attention_head_counts(draft_model_config)
     if not head_counts:

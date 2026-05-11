@@ -51,7 +51,10 @@ def test_derive_usp_topology_uses_ring_when_kv_heads_do_not_divide(monkeypatch):
 
 
 def test_derive_usp_topology_accepts_legacy_ulysses_ring_fields(monkeypatch):
-    _patch_draft_config(monkeypatch, heads=32, kv_heads=8)
+    def fail_get_config(_args):
+        raise AssertionError("_get_draft_model_config should not be called")
+
+    monkeypatch.setattr(train_entry, "_get_draft_model_config", fail_get_config)
     args = _args(sp_ulysses_size=2, sp_ring_size=2)
 
     train_entry._derive_usp_topology(args)
